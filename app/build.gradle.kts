@@ -4,10 +4,6 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// O GitHub informa o número da compilação: vira o número da versão do app.
-val runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
-val repo = System.getenv("GITHUB_REPOSITORY") ?: "webcarloshenrique-web/meus-gastos"
-
 android {
     namespace = "br.com.meusgastos"
     compileSdk = 35
@@ -16,25 +12,13 @@ android {
         applicationId = "br.com.meusgastos"
         minSdk = 26
         targetSdk = 35
-        versionCode = runNumber
-        versionName = "2.$runNumber"
-        buildConfigField("String", "REPO", "\"$repo\"")
-    }
-
-    // Chave fixa: permite instalar as atualizações por cima, sem perder dados.
-    signingConfigs {
-        create("release") {
-            storeFile = file("release.keystore")
-            storePassword = "meusgastos"
-            keyAlias = "meusgastos"
-            keyPassword = "meusgastos"
-        }
+        versionCode = 1
+        versionName = "1.0"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
@@ -46,11 +30,6 @@ android {
     }
     buildFeatures {
         compose = true
-        buildConfig = true
-    }
-    lint {
-        checkReleaseBuilds = false
-        abortOnError = false
     }
 }
 
@@ -59,8 +38,6 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.core:core-ktx:1.13.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }

@@ -2,10 +2,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Para procurar e baixar atualizações no GitHub -->
-    <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Para instalar a atualização baixada (o Android sempre pede confirmação) -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Para listar os apps instalados (e você escolher quais bancos ler) -->
     <queries>
@@ -23,8 +19,7 @@
 
         <activity
             android:name=".MainActivity"
-            android:exported="true"
-            android:windowSoftInputMode="adjustResize">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -40,16 +35,5 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
-
-        <!-- Compartilhar o CSV e instalar atualizações -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.files"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
     </application>
 </manifest>
