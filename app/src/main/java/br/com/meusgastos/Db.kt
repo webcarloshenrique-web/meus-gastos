@@ -19,7 +19,10 @@ data class Expense(
 /** Texto de notificação recebido (para conferência e melhoria do leitor). */
 data class LogEntry(val id: Long, val pkg: String, val text: String, val dateMs: Long, val parsed: Boolean)
 
-/** Banco de dados local (fica só no celular). */
+/**
+ * Banco de dados local (fica só no celular).
+ * Regra de segurança: só apaga um gasto quando VOCÊ toca em "Apagar".
+ */
 class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", null, 1) {
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -38,14 +41,20 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
 
     // ---------- Gastos ----------
 
-    fun insertExpense(e: Expense): Long {
+    private fun values(e: Expense): ContentValues {
         val cv = ContentValues()
         cv.put("cents", e.cents)
         cv.put("merchant", e.merchant)
         cv.put("category", e.category)
         cv.put("date_ms", e.dateMs)
         cv.put("source", e.source)
-        return writableDatabase.insert("expenses", null, cv)
+        return cv
+    }
+
+    fun insertExpense(e: Expense): Long = writableDatabase.insert("expenses", null, values(e))
+
+    fun update(e: Expense) {
+        writableDatabase.update("expenses", values(e), "id = ?", arrayOf(e.id.toString()))
     }
 
     private fun readExpenses(c: Cursor): List<Expense> {
@@ -76,6 +85,10 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         )
     )
 
+    fun all(): List<Expense> = readExpenses(
+        readableDatabase.rawQuery("SELECT $cols FROM expenses ORDER BY date_ms DESC", null)
+    )
+
     fun pending(): List<Expense> = readExpenses(
         readableDatabase.rawQuery(
             "SELECT $cols FROM expenses WHERE category IS NULL ORDER BY date_ms DESC", null
@@ -85,6 +98,15 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
     fun pendingCount(): Int {
         readableDatabase.rawQuery("SELECT COUNT(*) FROM expenses WHERE category IS NULL", null).use {
             return if (it.moveToFirst()) it.getInt(0) else 0
+        }
+    }
+
+    fun sumBetween(fromMs: Long, toMs: Long): Long {
+        readableDatabase.rawQuery(
+            "SELECT COALESCE(SUM(cents), 0) FROM expenses WHERE date_ms >= ? AND date_ms < ?",
+            arrayOf(fromMs.toString(), toMs.toString())
+        ).use {
+            return if (it.moveToFirst()) it.getLong(0) else 0L
         }
     }
 
@@ -101,6 +123,16 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         readableDatabase.rawQuery(
             "SELECT COUNT(*) FROM expenses WHERE cents = ? AND source = ? AND date_ms >= ?",
             arrayOf(cents.toString(), source, sinceMs.toString())
+        ).use {
+            return it.moveToFirst() && it.getInt(0) > 0
+        }
+    }
+
+    /** Usado ao restaurar backup: não duplica o que já existe. */
+    fun exists(cents: Long, merchant: String, dateMs: Long): Boolean {
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM expenses WHERE cents = ? AND merchant = ? AND date_ms >= ? AND date_ms < ?",
+            arrayOf(cents.toString(), merchant, (dateMs - 60_000).toString(), (dateMs + 60_000).toString())
         ).use {
             return it.moveToFirst() && it.getInt(0) > 0
         }

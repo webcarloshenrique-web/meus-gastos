@@ -1,62 +1,84 @@
-# Meus Gastos (app Android pessoal)
+# Meus Gastos: versão 2
 
-App simples que lê as notificações dos seus bancos, registra cada gasto e separa por categoria.
-O que ele não reconhecer vai para **❓ Pendentes**, e você só toca na categoria certa. Ele aprende
-e, da próxima vez, classifica sozinho. Seus dados ficam **só no seu celular**.
+App Android pessoal que lê as notificações dos bancos, registra cada gasto e separa por categoria.
+Seus dados ficam **só no seu celular**.
+
+**Novidades da versão 2**
+- Menu lateral (botão ☰ no canto de cima, à esquerda) e Ajustes (⚙️ no canto de cima, à direita)
+- Faixa de meses (JUL · AGO · SET · OUT · NOV) com o total de cada mês
+- Relatórios: gráfico por mês, gráfico por dia, rosca por categoria e a seção "Entenda seus gastos"
+- Calendário colorido: quanto mais escuro o dia, mais você gastou
+- Toque em qualquer gasto para corrigir o valor, o nome, a categoria ou para apagar
+- Exportação em CSV (Excel/Planilhas) com resumo, que também serve de backup
+- "Testar o leitor" agora **não grava nada**, então seus gastos não mudam
+- **Atualização automática:** o app avisa quando há versão nova e se atualiza sem perder dados
 
 ---
 
-## Passo 1: colocar o projeto no GitHub (uma vez só)
+## Configuração única (só desta vez)
 
-1. Entre em https://github.com e crie uma conta (é grátis).
-2. Clique em **New repository** (botão verde "New").
-   - Nome: `meus-gastos`
-   - Marque **Private** (privado)
-   - Clique em **Create repository**.
-3. Na página do repositório, clique em **uploading an existing file**.
-4. Descompacte o arquivo `meus-gastos.zip` no computador. Abra a pasta `meus-gastos`,
-   selecione **tudo o que está dentro dela** e arraste para a página do GitHub.
-5. Clique em **Commit changes**.
+### 1. Guardar a chave do app no GitHub
+A chave garante que cada versão nova instale **por cima** da anterior, mantendo seus gastos.
 
-> ⚠️ A pasta `.github` costuma ficar oculta no computador. Se ela não subir, crie o arquivo
-> à mão: **Add file → Create new file**, digite o nome `.github/workflows/build.yml`, cole
-> o conteúdo do arquivo `build.yml` e clique em **Commit changes**.
+1. No repositório `meus-gastos`, vá em **Settings** (aba de cima).
+2. No menu da esquerda: **Secrets and variables → Actions**.
+3. Clique em **New repository secret**.
+   - **Name:** `KEYSTORE_BASE64`
+   - **Secret:** abra o arquivo `KEYSTORE_BASE64.txt` (enviado junto com este guia), copie **todo** o texto e cole aqui.
+4. Clique em **Add secret**.
 
-## Passo 2: o GitHub gera o app (automático)
+> 🔒 Guarde o `KEYSTORE_BASE64.txt` num lugar seguro e **não** o envie para o repositório.
+> Se perder esse arquivo, as próximas versões não vão instalar por cima.
 
-1. Clique na aba **Actions**. Vai aparecer "Gerar APK" rodando (bolinha amarela).
-2. Espere uns 5 a 10 minutos até ficar ✅ verde.
-3. Clique nessa execução e, embaixo, em **Artifacts**, clique em **meus-gastos-apk**.
-4. Vai baixar um `.zip`. Dentro dele está o `app-debug.apk`.
+### 2. Deixar o repositório público
+É o que permite ao app consultar se há versão nova. Só o **código** fica visível; seus gastos nunca saem do celular.
 
-> Se ficar ❌ vermelho: clique na execução, depois em "build", copie as linhas de erro
-> e envie para eu corrigir.
+1. **Settings → General**, role até o fim (**Danger Zone**).
+2. **Change repository visibility → Change to public** e confirme.
 
-## Passo 3: instalar no celular
+### 3. Subir os arquivos novos
+1. Descompacte o `meus-gastos.zip`.
+2. No repositório: **Add file → Upload files**.
+3. Arraste a pasta **`app`** inteira e os arquivos **`LEIA-ME.md`**, **`build.gradle.kts`**, **`settings.gradle.kts`**, **`gradle.properties`** e **`.gitignore`**. Os que já existem são substituídos.
+4. Clique em **Commit changes**.
+5. Atualize o arquivo do GitHub Actions:
+   - Clique na pasta **`.github/workflows`** e depois em **`build.yml`**.
+   - Clique no ✏️ (lápis, canto direito), apague todo o conteúdo e cole o do novo `build.yml` (está dentro do zip, em `.github/workflows/build.yml`).
+   - Clique em **Commit changes**.
 
-1. Mande o `app-debug.apk` para o celular (WhatsApp para você mesmo, Google Drive ou cabo USB).
-2. Toque no arquivo. Se o Android pedir, permita **"Instalar apps desconhecidos"** para esse app.
-3. Toque em **Instalar**. Se aparecer aviso do Play Protect, toque em **Instalar mesmo assim**
-   (aparece porque o app não veio da Play Store).
+### 4. Baixar a nova versão
+1. Aba **Actions**: espere a execução mais recente ficar ✅ verde (5 a 10 minutos).
+2. Na página inicial do repositório, à direita, em **Releases**, clique na versão mais nova
+   e baixe o **`meus-gastos.apk`**.
 
-## Passo 4: liberar a leitura das notificações
+### 5. Instalar no celular (desta vez é diferente)
+Como a chave mudou, o Android **não** deixa instalar por cima da versão 1:
 
-Abra o **Meus Gastos → ⚙️ Ajustes** e siga os botões da tela:
+1. ⚠️ **Anote os gastos que você já lançou**: a versão 1 não tem exportação e eles serão perdidos.
+2. Desinstale o Meus Gastos atual.
+3. Desligue o Play Protect (Play Store → foto → Play Protect → ⚙️ → desligar "Verificar apps").
+4. Instale o `meus-gastos.apk` novo.
+5. Religue o Play Protect.
+6. Abra o app → ⚙️ Ajustes → ative de novo a leitura das notificações.
 
-1. **Liberar configurações restritas.** Abre as informações do app. Toque no menu **⋮** (canto
-   de cima) e em **Permitir configurações restritas**. Se não aparecer, pule.
-2. **Ativar leitura.** Ligue o **Meus Gastos** na lista e confirme.
-3. Confira se os seus bancos estão marcados em **Quais apps de banco ler**.
+---
 
-Para testar sem gastar nada, use os botões **Compra conhecida** e **Compra desconhecida**
-em Ajustes.
+## Daqui para frente: atualizar é automático
 
-## Se um gasto não for reconhecido
+1. Quando houver melhorias, suba os arquivos alterados no GitHub (passo 3).
+2. O GitHub gera e publica a versão sozinho.
+3. Ao abrir o app, aparece **"🎉 Nova versão disponível"** → **Atualizar agora**.
+   - Na primeira vez, o Android pede para **permitir instalar apps do Meus Gastos**. Ligue e volte.
+   - O Android sempre pede uma confirmação final ("Atualizar"). É uma regra do sistema.
+4. Seus gastos continuam lá.
 
-Em **⚙️ Ajustes → Textos que o app recebeu**, os itens com ✖ não viraram gasto.
-Toque em **Copiar tudo**, apague nomes e números e envie o texto para ajustar o leitor.
+> Se o Play Protect bloquear a atualização, faça como na instalação: desligue, atualize, religue.
 
-## Atualizar o app
+Você também pode procurar manualmente em **⚙️ Ajustes → Atualização**.
 
-Quando houver uma nova versão do código, suba os arquivos alterados no GitHub (Passo 1, itens 3 a 5).
-O APK novo aparece em **Actions**. Instale por cima: os dados continuam lá.
+## Backup recomendado
+De vez em quando: **⚙️ Ajustes → Exportar gastos → Todos os gastos** e salve no Drive.
+Se trocar de celular, use **Restaurar backup (CSV)**.
+
+## Se um gasto do banco não for reconhecido
+**⚙️ Ajustes → Textos que o app recebeu → Copiar tudo**. Apague nomes e números e envie para ajustar o leitor.

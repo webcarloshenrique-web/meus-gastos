@@ -21,6 +21,17 @@ val ptBR: Locale = Locale("pt", "BR")
 
 fun money(cents: Long): String = NumberFormat.getCurrencyInstance(ptBR).format(cents / 100.0)
 
+/** Valor curto para gráficos: "R$ 1,2 mil", "R$ 850". */
+fun compact(cents: Long, symbol: Boolean = true): String {
+    val v = cents / 100.0
+    val s = when {
+        v >= 1_000_000 -> String.format(ptBR, "%.1f mi", v / 1_000_000)
+        v >= 1_000 -> String.format(ptBR, "%.1f mil", v / 1_000)
+        else -> String.format(ptBR, "%.0f", v)
+    }
+    return if (symbol) "R$ $s" else s
+}
+
 /** "25,90" / "1.234,56" / "25.9" -> centavos */
 fun parseCents(s: String): Long? {
     var t = s.trim().replace("R$", "").replace(" ", "")
@@ -30,7 +41,7 @@ fun parseCents(s: String): Long? {
     return Math.round(d * 100)
 }
 
-/** Avisa a tela que os dados mudaram. */
+/** Avisa as telas que os dados mudaram. */
 object Bus {
     val tick = mutableIntStateOf(0)
     private val handler = Handler(Looper.getMainLooper())
@@ -39,7 +50,7 @@ object Bus {
     }
 }
 
-/** Preferências: quais apps (bancos) o app deve ler. */
+/** Preferências: quais apps (bancos) o app deve ler, e versão de atualização adiada. */
 object Prefs {
     private fun sp(c: Context) = c.getSharedPreferences("cfg", Context.MODE_PRIVATE)
 
@@ -55,6 +66,12 @@ object Prefs {
         val s = monitored(c).toMutableSet()
         if (on) s.add(pkg) else s.remove(pkg)
         setAll(c, s)
+    }
+
+    fun skipped(c: Context): Int = sp(c).getInt("skipped_version", -1)
+
+    fun skip(c: Context, version: Int) {
+        sp(c).edit().putInt("skipped_version", version).apply()
     }
 }
 
@@ -119,7 +136,7 @@ object Notifier {
         )
         val open = Intent(ctx, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            .putExtra("tab", 1)
+            .putExtra("screen", "PENDING")
         val pi = PendingIntent.getActivity(
             ctx, 0, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
