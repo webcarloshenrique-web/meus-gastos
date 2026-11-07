@@ -1,5 +1,6 @@
 package br.com.meusgastos
 
+import android.content.Context
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -27,14 +28,17 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -45,8 +49,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -56,17 +63,44 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import kotlin.math.roundToInt
 
-// ---------------------------------------------------------------- Cores
+// ---------------------------------------------------------------- Paletas de cor
 
-val Verde = Color(0xFF1B7F5C)
-val VerdeClaro = Color(0xFF2FA37A)
+data class Paleta(val nome: String, val emoji: String, val primary: Color, val light: Color)
+
+object Tema {
+    val opcoes = listOf(
+        Paleta("Verde Dinheiro", "💵", Color(0xFF1B7F5C), Color(0xFF2FA37A)),
+        Paleta("Azul Banco", "🏦", Color(0xFF1F4E8C), Color(0xFF3A78C2)),
+        Paleta("Ouro", "🪙", Color(0xFF8A6300), Color(0xFFC08A1A)),
+        Paleta("Petróleo", "📈", Color(0xFF0E5C66), Color(0xFF1C8A96)),
+        Paleta("Grafite", "💼", Color(0xFF2F3E46), Color(0xFF52646E)),
+        Paleta("Bordô", "🍷", Color(0xFF7A1F3D), Color(0xFFA8385E)),
+    )
+    var atual by mutableStateOf(opcoes[0])
+
+    fun load(ctx: Context) {
+        atual = opcoes.getOrElse(Prefs.palette(ctx)) { opcoes[0] }
+    }
+
+    fun set(ctx: Context, i: Int) {
+        Prefs.setPalette(ctx, i)
+        atual = opcoes.getOrElse(i) { opcoes[0] }
+    }
+}
+
+/** Cor principal (segue a paleta escolhida em Ajustes). */
+val Verde: Color get() = Tema.atual.primary
+val VerdeClaro: Color get() = Tema.atual.light
 val Fundo = Color(0xFFF3F6F4)
 val TextoForte = Color(0xFF17231F)
 val TextoSuave = Color(0xFF5F6F68)
 val Linha = Color(0xFFE1E8E4)
 val Vermelho = Color(0xFFC62828)
+val Laranja = Color(0xFFE08A00)
+val VerdeOk = Color(0xFF2E9E5B)
 
 const val MIN_MONTH = -23
+const val MAX_MONTH = 6
 
 val dateFmt = SimpleDateFormat("dd/MM HH:mm", ptBR)
 val dayFmt = SimpleDateFormat("dd/MM", ptBR)
@@ -78,18 +112,11 @@ data class CatInfo(val name: String, val emoji: String, val color: Color)
 
 object Cats {
     val pendente = CatInfo("Pendente", "❓", Color(0xFFB0B9B5))
-    val list = listOf(
-        CatInfo("Alimentação", "🍔", Color(0xFFF4A261)),
-        CatInfo("Mercado", "🛒", Color(0xFF2A9D8F)),
-        CatInfo("Transporte", "🚗", Color(0xFF457B9D)),
-        CatInfo("Saúde", "💊", Color(0xFFE76F51)),
-        CatInfo("Casa e contas", "🏠", Color(0xFF8D6E63)),
-        CatInfo("Compras", "🛍️", Color(0xFF9C4DCC)),
-        CatInfo("Lazer", "🎮", Color(0xFFE5487D)),
-        CatInfo("Educação", "📚", Color(0xFF3F51B5)),
-        CatInfo("Pessoas (Pix)", "👤", Color(0xFF00A5B8)),
-        CatInfo("Outros", "📦", Color(0xFF78858A)),
-    )
+    var list by mutableStateOf<List<CatInfo>>(emptyList())
+
+    fun load(db: Db) {
+        list = db.categories().map { CatInfo(it.name, it.emoji, Color(it.color)) }
+    }
 
     fun of(name: String?): CatInfo =
         if (name == null) pendente else list.firstOrNull { it.name == name } ?: CatInfo(name, "📦", Color(0xFF78858A))
@@ -142,13 +169,13 @@ fun CatIcon(cat: CatInfo, size: Dp = 40.dp) {
 }
 
 @Composable
-fun StatBox(label: String, value: String, modifier: Modifier = Modifier) {
+fun StatBox(label: String, value: String, modifier: Modifier = Modifier, color: Color = TextoForte) {
     Column(
         modifier.clip(RoundedCornerShape(14.dp)).background(Fundo).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(label, fontSize = 12.sp, color = TextoSuave, maxLines = 1)
-        Text(value, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextoForte, maxLines = 1)
+        Text(value, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = color, maxLines = 1)
     }
 }
 
@@ -166,7 +193,7 @@ fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, mod
                     .clickable { onSelect(i) }
                     .padding(vertical = 10.dp),
                 textAlign = TextAlign.Center,
-                fontSize = 14.sp,
+                fontSize = 13.sp,
                 maxLines = 1,
                 fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
                 color = if (sel) Verde else TextoSuave,
@@ -175,16 +202,95 @@ fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit, mod
     }
 }
 
-// ---------------------------------------------------------------- Faixa de meses (JUL AGO SET OUT NOV)
+/** Botão de escolha (chip) simples. */
+@Composable
+fun Chip(text: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Text(
+        text,
+        modifier = modifier.clip(RoundedCornerShape(50))
+            .background(if (selected) Verde else Fundo)
+            .border(1.dp, if (selected) Verde else Linha, RoundedCornerShape(50))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 12.dp),
+        textAlign = TextAlign.Center,
+        color = if (selected) Color.White else TextoForte,
+        fontWeight = FontWeight.Medium,
+        fontSize = 14.sp,
+        maxLines = 1,
+    )
+}
+
+/** Contador com − e + (ex.: número de parcelas). */
+@Composable
+fun Stepper(value: Int, range: IntRange, onChange: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedButton(onClick = { if (value > range.first) onChange(value - 1) }) { Text("−", fontSize = 20.sp) }
+        Text(
+            "$value", Modifier.width(56.dp), textAlign = TextAlign.Center,
+            fontSize = 22.sp, fontWeight = FontWeight.Bold, color = TextoForte,
+        )
+        OutlinedButton(onClick = { if (value < range.last) onChange(value + 1) }) { Text("+", fontSize = 20.sp) }
+    }
+}
+
+/** Barra de progresso de limite: verde, laranja (perto) e vermelho (passou). */
+@Composable
+fun LimitBar(gasto: Long, limite: Long, alertPct: Int) {
+    val frac = if (limite > 0) gasto.toFloat() / limite else 0f
+    val anim by animateFloatAsState(targetValue = frac.coerceAtMost(1f), label = "limite")
+    val cor = when {
+        frac >= 1f -> Vermelho
+        frac * 100 >= alertPct -> Laranja
+        else -> VerdeOk
+    }
+    Box(Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(50)).background(Linha)) {
+        Box(Modifier.fillMaxHeight().fillMaxWidth(anim).clip(RoundedCornerShape(50)).background(cor))
+    }
+}
+
+// ---------------------------------------------------------------- Campo de valor (digita só números)
+
+/**
+ * Campo de dinheiro sem vírgula: os números entram da direita para a esquerda.
+ * 3 -> 0,03 · 33 -> 0,33 · 333 -> 3,33 · 3333 -> 33,33
+ */
+@Composable
+fun MoneyField(
+    cents: Long,
+    onChange: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+    label: String? = null,
+    big: Boolean = false,
+) {
+    val text = if (cents == 0L) "" else String.format(ptBR, "%,.2f", cents / 100.0)
+    val size = if (big) 28.sp else 18.sp
+    val rotulo: (@Composable () -> Unit)? = if (label == null) null else @Composable { Text(label) }
+    OutlinedTextField(
+        value = TextFieldValue(text, selection = TextRange(text.length)),
+        onValueChange = { v ->
+            val d = v.text.filter { it.isDigit() }
+            if (d.length <= 11) onChange(d.toLongOrNull() ?: 0L)
+        },
+        label = rotulo,
+        placeholder = { Text("0,00", fontSize = size) },
+        prefix = { Text("R$ ", fontSize = size, fontWeight = FontWeight.Bold) },
+        textStyle = TextStyle(fontSize = size, fontWeight = FontWeight.Bold),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        singleLine = true,
+        modifier = modifier.fillMaxWidth(),
+    )
+}
+
+// ---------------------------------------------------------------- Faixa de meses (SET OUT NOV DEZ JAN)
 
 @Composable
 fun MonthStrip(db: Db, selected: Int, onSelect: (Int) -> Unit) {
     val tick = Bus.tick.intValue
-    val offsets = remember { (MIN_MONTH..0).toList() }
+    val offsets = remember { (MIN_MONTH..MAX_MONTH).toList() }
     val totais = remember(tick) { offsets.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) } }
     val idx = selected - MIN_MONTH
-    val state = rememberLazyListState(initialFirstVisibleItemIndex = (idx - 3).coerceAtLeast(0))
-    LaunchedEffect(selected) { state.animateScrollToItem((idx - 3).coerceAtLeast(0)) }
+    val state = rememberLazyListState(initialFirstVisibleItemIndex = (idx - 2).coerceAtLeast(0))
+    LaunchedEffect(selected) { state.animateScrollToItem((idx - 2).coerceAtLeast(0)) }
 
     LazyRow(
         state = state,
@@ -194,21 +300,28 @@ fun MonthStrip(db: Db, selected: Int, onSelect: (Int) -> Unit) {
         items(offsets.size) { i ->
             val o = offsets[i]
             val sel = o == selected
+            val futuro = o > 0
             Column(
                 Modifier.width(62.dp).clip(RoundedCornerShape(16.dp))
-                    .background(if (sel) Verde else Color.White)
+                    .background(if (sel) Verde else if (futuro) Color(0xFFF7F9F8) else Color.White)
                     .border(1.dp, if (sel) Verde else Linha, RoundedCornerShape(16.dp))
                     .clickable { onSelect(o) }
                     .padding(vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(Dates.abbr(o), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (sel) Color.White else TextoForte)
-                Text("${Dates.year(o)}", fontSize = 10.sp, color = if (sel) Color.White.copy(alpha = 0.8f) else TextoSuave)
                 Text(
-                    if (totais[i] > 0) compact(totais[i], false) else "—",
+                    Dates.abbr(o), fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                    color = if (sel) Color.White else if (futuro) TextoSuave else TextoForte,
+                )
+                Text(
+                    if (o == 0) "hoje" else "${Dates.year(o)}", fontSize = 10.sp,
+                    color = if (sel) Color.White.copy(alpha = 0.8f) else TextoSuave,
+                )
+                Text(
+                    if (totais[i] > 0) (if (futuro) "⏳" else "") + compact(totais[i], false) else "—",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
-                    color = if (sel) Color.White else Verde,
+                    color = if (sel) Color.White else if (futuro) Laranja else Verde,
                 )
             }
         }
@@ -234,7 +347,7 @@ fun BarChart(
         verticalAlignment = Alignment.Bottom,
     ) {
         values.forEachIndexed { i, v ->
-            val alvo = v.toFloat() / max
+            val alvo = v.coerceAtLeast(0L).toFloat() / max
             val frac by animateFloatAsState(targetValue = alvo, label = "barra")
             val sel = i == selected
             Column(
@@ -342,7 +455,8 @@ fun ExpenseItem(e: Expense, onClick: () -> Unit) {
                 e.merchant, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
-            Text("${cat.name} · ${dateFmt.format(Date(e.dateMs))}", fontSize = 13.sp, color = TextoSuave, maxLines = 1)
+            val parc = if (e.instTotal > 1) " · 💳 ${e.instNum}/${e.instTotal}" else ""
+            Text("${cat.name} · ${dateFmt.format(Date(e.dateMs))}$parc", fontSize = 13.sp, color = TextoSuave, maxLines = 1)
         }
         Text(money(e.cents), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextoForte)
     }
@@ -377,27 +491,44 @@ fun CategoryGrid(selected: String?, onPick: (String) -> Unit) {
     }
 }
 
-/** Janela para corrigir um gasto: nome, valor e categoria — ou apagar. */
+/** Janela para corrigir um gasto: nome, valor e categoria — ou apagar (uma parcela ou a compra toda). */
 @Composable
 fun EditExpenseDialog(db: Db, e: Expense, onDismiss: () -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     var nome by remember(e.id) { mutableStateOf(e.merchant) }
-    var valor by remember(e.id) { mutableStateOf(String.format(ptBR, "%.2f", e.cents / 100.0)) }
+    var valor by remember(e.id) { mutableLongStateOf(e.cents) }
     var cat by remember(e.id) { mutableStateOf(e.category) }
     var confirmarApagar by remember(e.id) { mutableStateOf(false) }
     var erro by remember(e.id) { mutableStateOf("") }
+    val parcelado = e.planId > 0 && e.instTotal > 1
 
     if (confirmarApagar) {
         AlertDialog(
             onDismissRequest = { confirmarApagar = false },
             title = { Text("Apagar este gasto?") },
-            text = { Text("${e.merchant} — ${money(e.cents)}\n\nEssa ação não pode ser desfeita.") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${e.merchant} — ${money(e.cents)}")
+                    if (parcelado) Text("É a parcela ${e.instNum} de ${e.instTotal}. O que você quer apagar?")
+                    Hint("Essa ação não pode ser desfeita.")
+                    if (parcelado) {
+                        OutlinedButton(onClick = {
+                            db.delete(e.id); Bus.bump(); confirmarApagar = false; onDismiss()
+                        }, modifier = Modifier.fillMaxWidth()) { Text("Só esta parcela") }
+                        Button(
+                            onClick = { db.deletePlan(e.planId); Bus.bump(); confirmarApagar = false; onDismiss() },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Vermelho),
+                        ) { Text("Todas as ${e.instTotal} parcelas") }
+                    }
+                }
+            },
             confirmButton = {
-                TextButton(onClick = {
-                    db.delete(e.id)
-                    Bus.bump()
-                    confirmarApagar = false
-                    onDismiss()
-                }) { Text("Apagar", color = Vermelho, fontWeight = FontWeight.Bold) }
+                if (!parcelado) {
+                    TextButton(onClick = {
+                        db.delete(e.id); Bus.bump(); confirmarApagar = false; onDismiss()
+                    }) { Text("Apagar", color = Vermelho, fontWeight = FontWeight.Bold) }
+                }
             },
             dismissButton = { TextButton(onClick = { confirmarApagar = false }) { Text("Cancelar") } },
         )
@@ -406,37 +537,37 @@ fun EditExpenseDialog(db: Db, e: Expense, onDismiss: () -> Unit) {
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Editar gasto") },
+        title = { Text(if (parcelado) "Editar parcela ${e.instNum}/${e.instTotal}" else "Editar gasto") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = nome, onValueChange = { nome = it },
                     label = { Text("Estabelecimento") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                 )
-                OutlinedTextField(
-                    value = valor, onValueChange = { valor = it; erro = "" },
-                    label = { Text("Valor (R$)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                )
+                MoneyField(valor, { valor = it; erro = "" }, label = "Valor")
                 Text("Categoria", fontWeight = FontWeight.Medium)
+                if (parcelado) Hint("A categoria vale para todas as parcelas desta compra.")
                 CategoryGrid(cat) { cat = it }
                 if (erro.isNotEmpty()) Text(erro, color = Vermelho)
             }
         },
         confirmButton = {
-            Button(onClick = {
-                val c = parseCents(valor)
-                if (c == null || c <= 0) {
-                    erro = "Digite um valor válido, por exemplo 25,90"
-                } else {
-                    val upd = e.copy(cents = c, merchant = nome.trim().ifBlank { e.merchant }, category = cat)
-                    db.update(upd)
-                    val nova = cat
-                    if (nova != null && nova != e.category) Categorizer.learn(db, upd, nova)
-                    Bus.bump()
-                    onDismiss()
-                }
-            }) { Text("Salvar") }
+            Button(
+                onClick = {
+                    if (valor <= 0) {
+                        erro = "Digite o valor"
+                    } else {
+                        val upd = e.copy(cents = valor, merchant = nome.trim().ifBlank { e.merchant }, category = cat)
+                        db.update(upd)
+                        val nova = cat
+                        if (nova != null && nova != e.category) Categorizer.learn(db, upd, nova)
+                        Limits.check(ctx, db, nova)
+                        Bus.bump()
+                        onDismiss()
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Verde),
+            ) { Text("Salvar") }
         },
         dismissButton = {
             Row {

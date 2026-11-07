@@ -10,7 +10,11 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -26,6 +30,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Switch
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -41,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -59,7 +65,7 @@ private fun isListenerEnabled(ctx: Context): Boolean =
         ?.contains(ctx.packageName) == true
 
 @Composable
-fun SettingsScreen(db: Db, pad: PaddingValues, month: Int) {
+fun SettingsScreen(db: Db, pad: PaddingValues, go: (Screen) -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val tick = Bus.tick.intValue
@@ -85,21 +91,8 @@ fun SettingsScreen(db: Db, pad: PaddingValues, month: Int) {
 
     var textoTeste by remember { mutableStateOf("Compra de R$ 25,90 APROVADA em IFOOD") }
     var resultado by remember { mutableStateOf<String?>(null) }
-    var exportar by remember { mutableStateOf(false) }
+    var autoEntrada by remember { mutableStateOf(Prefs.autoIncome(ctx)) }
     var statusAtualizacao by remember { mutableStateOf("") }
-
-    val restaurar = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) {
-            val n = try { Csv.restore(ctx, db, uri) } catch (_: Exception) { -1 }
-            Bus.bump()
-            val msg = when {
-                n < 0 -> "Esse arquivo não é um backup do Meus Gastos."
-                n == 0 -> "Nada novo para restaurar (os gastos já estavam aqui)."
-                else -> "✅ $n gastos restaurados!"
-            }
-            Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
-        }
-    }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(pad),
@@ -182,14 +175,22 @@ fun SettingsScreen(db: Db, pad: PaddingValues, month: Int) {
                     modifier = Modifier.fillMaxWidth(), minLines = 2,
                 )
                 OutlinedButton(onClick = {
-                    val p = Parser.parse("", textoTeste)
-                    resultado = if (p == null) {
-                        "✖ Não reconheci como gasto (pode ser Pix recebido, fatura ou propaganda)."
-                    } else {
-                        val c = Categorizer.categorize(db, p.merchant)
-                        val ci = Cats.of(c)
-                        "✔ ${money(p.cents)} · ${p.merchant} · ${ci.emoji} " +
-                            if (c == null) "iria para Pendentes" else ci.name
+                    val ent = Parser.parseIncome("", textoTeste)
+                    val p = if (ent == null) Parser.parse("", textoTeste) else null
+                    resultado = when {
+                        ent != null -> "💰 Entrada: ${money(ent.cents)} · ${ent.desc}"
+                        p == null -> "✖ Não reconheci (pode ser fatura, propaganda ou estorno)."
+                        else -> {
+                            val c = Categorizer.categorize(db, p.merchant)
+                            val ci = Cats.of(c)
+                            val parc = when {
+                                p.parcelaAtual > 0 -> " · parcela ${p.parcelaAtual}/${p.parcelas}"
+                                p.parcelas > 1 -> " · ${p.parcelas}x de ${money(p.cents)} (total ${money(p.cents * p.parcelas + p.firstExtra)})"
+                                else -> ""
+                            }
+                            "✔ Gasto: ${money(p.cents + p.firstExtra)} · ${p.merchant}$parc · ${ci.emoji} " +
+                                if (c == null) "iria para Pendentes" else ci.name
+                        }
                     }
                 }, modifier = Modifier.fillMaxWidth()) { Text("Testar (não salva nada)") }
                 resultado?.let {
@@ -201,19 +202,53 @@ fun SettingsScreen(db: Db, pad: PaddingValues, month: Int) {
             }
         }
 
-        // 4) Exportar / backup
+        // 4) Aparência, entradas e atalhos
         item {
             AppCard {
-                SectionTitle("📤 Relatório e backup")
-                Hint("O CSV abre no Excel ou no Google Planilhas: data, categoria, estabelecimento, valor e um resumo no final. Ele também serve de backup.")
-                Button(
-                    onClick = { exportar = true }, modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Verde),
-                ) { Text("📤 Exportar gastos (CSV)") }
-                OutlinedButton(
-                    onClick = { restaurar.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth(),
-                ) { Text("📥 Restaurar backup (CSV)") }
-                Hint("Restaurar só adiciona o que estiver faltando. Nada é apagado.")
+                SectionTitle("🎨 Cores do app")
+                Tema.opcoes.chunked(3).forEachIndexed { linha, grupo ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        grupo.forEachIndexed { j, p ->
+                            val idx = linha * 3 + j
+                            val sel = Tema.atual == p
+                            Column(
+                                Modifier.weight(1f).clip(RoundedCornerShape(14.dp))
+                                    .background(if (sel) p.primary.copy(alpha = 0.12f) else Fundo)
+                                    .border(if (sel) 2.dp else 1.dp, if (sel) p.primary else Linha, RoundedCornerShape(14.dp))
+                                    .clickable { Tema.set(ctx, idx) }
+                                    .padding(10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Box(
+                                    Modifier.size(width = 56.dp, height = 22.dp).clip(RoundedCornerShape(50))
+                                        .background(Brush.horizontalGradient(listOf(p.primary, p.light)))
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text("${p.emoji} ${p.nome}", fontSize = 12.sp, color = TextoForte, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            AppCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        SectionTitle("💰 Entradas automáticas")
+                        Hint("Registrar sozinho Pix recebido, depósito e salário avisados pelo banco.")
+                    }
+                    Switch(checked = autoEntrada, onCheckedChange = { autoEntrada = it; Prefs.setAutoIncome(ctx, it) })
+                }
+            }
+        }
+        item {
+            AppCard {
+                SectionTitle("⚙️ Mais opções")
+                OutlinedButton(onClick = { go(Screen.LIMITS) }, modifier = Modifier.fillMaxWidth()) { Text("🎯 Limites por categoria") }
+                OutlinedButton(onClick = { go(Screen.CATEGORIES) }, modifier = Modifier.fillMaxWidth()) { Text("🏷️ Categorias personalizadas") }
+                OutlinedButton(onClick = { go(Screen.BACKUP) }, modifier = Modifier.fillMaxWidth()) { Text("📤 Exportar gastos / backup") }
+                OutlinedButton(onClick = { shareApp(ctx) }, modifier = Modifier.fillMaxWidth()) { Text("📲 Indicar o app para alguém") }
             }
         }
 
@@ -283,28 +318,4 @@ fun SettingsScreen(db: Db, pad: PaddingValues, month: Int) {
         item { Spacer(Modifier.width(1.dp)) }
     }
 
-    if (exportar) {
-        AlertDialog(
-            onDismissRequest = { exportar = false },
-            title = { Text("Exportar quais gastos?") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(
-                        "📅 ${Dates.full(month)}",
-                        "🗓️ Últimos 5 meses (${Dates.abbr(month - 4)} a ${Dates.abbr(month)})",
-                        "📚 Todos os gastos",
-                    ).forEachIndexed { i, rotulo ->
-                        OutlinedButton(onClick = {
-                            exportar = false
-                            if (!Csv.export(ctx, db, i, month)) {
-                                Toast.makeText(ctx, "Não há gastos nesse período.", Toast.LENGTH_SHORT).show()
-                            }
-                        }, modifier = Modifier.fillMaxWidth()) { Text(rotulo) }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { exportar = false }) { Text("Cancelar") } },
-        )
-    }
 }

@@ -1,25 +1,33 @@
 package br.com.meusgastos
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -31,11 +39,14 @@ import kotlin.math.roundToInt
 fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit) {
     val tick = Bus.tick.intValue
     var modo by rememberSaveable { mutableIntStateOf(0) }
+    var abrirAnalise by rememberSaveable { mutableStateOf(false) }
     val range = remember(month) { Dates.range(month) }
     val lista = remember(tick, month) { db.expenses(range.first, range.second) }
     val anterior = remember(tick, month) { val r = Dates.range(month - 1); db.expenses(r.first, r.second) }
     val meses = (month - 4..month).toList()
     val porMes = remember(tick, month) { meses.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) } }
+    val entradasMes = remember(tick, month) { meses.map { o -> val r = Dates.range(o); db.sumIncome(r.first, r.second) } }
+    val saldo = remember(tick, month) { Budget.saldo(db, month) }
     val dim = Dates.daysIn(month)
     val porDia = remember(lista, dim) {
         val arr = LongArray(dim)
@@ -56,7 +67,7 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
         item { MonthStrip(db, month, onMonth) }
         item {
             Segmented(
-                listOf("📊 Por mês", "📅 Por dia", "🍕 Categorias"), modo, { modo = it },
+                listOf("📊 Mês", "📅 Dia", "🍕 Categ.", "💰 Sobra"), modo, { modo = it },
                 Modifier.padding(horizontal = 16.dp),
             )
         }
@@ -122,7 +133,7 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
                 }
             }
 
-            else -> item {
+            2 -> item {
                 AppCard(Modifier.padding(horizontal = 16.dp)) {
                     SectionTitle("Para onde foi o dinheiro")
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -136,16 +147,69 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
                     porCat.forEach { (cat, v) -> CategoryBarRow(cat, v, total) }
                 }
             }
+
+            else -> item {
+                val maxV = (porMes + entradasMes).maxOrNull()?.coerceAtLeast(1L) ?: 1L
+                AppCard(Modifier.padding(horizontal = 16.dp)) {
+                    SectionTitle("Entradas × gastos")
+                    Hint("🟢 entrou   🔴 saiu   · sobra de cada mês")
+                    meses.forEachIndexed { i, o ->
+                        val e = entradasMes[i]
+                        val g = porMes[i]
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onMonth(o) }) {
+                            Text(
+                                Dates.abbr(o), Modifier.width(44.dp), fontSize = 14.sp,
+                                fontWeight = if (o == month) FontWeight.Bold else FontWeight.Normal, color = TextoForte,
+                            )
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Box(Modifier.fillMaxWidth().height(10.dp)) {
+                                    Box(
+                                        Modifier.fillMaxHeight().fillMaxWidth((e.toFloat() / maxV).coerceIn(0.01f, 1f))
+                                            .clip(RoundedCornerShape(50)).background(VerdeOk)
+                                    )
+                                }
+                                Box(Modifier.fillMaxWidth().height(10.dp)) {
+                                    Box(
+                                        Modifier.fillMaxHeight().fillMaxWidth((g.toFloat() / maxV).coerceIn(0.01f, 1f))
+                                            .clip(RoundedCornerShape(50)).background(Vermelho)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                if (e > 0) compact(e - g) else "—",
+                                Modifier.width(76.dp), fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                                color = if (e - g >= 0) VerdeOk else Vermelho,
+                            )
+                        }
+                    }
+                    if (entradasMes.all { it == 0L }) Hint("Registre suas entradas em 💰 Entradas para ver quanto sobra.")
+                }
+            }
         }
 
+        // Análise e previsão (recolhida)
         item {
             AppCard(Modifier.padding(horizontal = 16.dp)) {
-                SectionTitle("🔎 Entenda seus gastos")
-                insights(lista, anterior, month).forEach { (emoji, texto) ->
-                    Row(verticalAlignment = Alignment.Top) {
-                        Text(emoji, fontSize = 20.sp)
-                        Spacer(Modifier.width(10.dp))
-                        Text(texto, fontSize = 15.sp, color = TextoForte, modifier = Modifier.weight(1f))
+                Row(
+                    Modifier.fillMaxWidth().clickable { abrirAnalise = !abrirAnalise },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        SectionTitle("🔎 Entenda seus gastos")
+                        Hint(if (abrirAnalise) "Toque para fechar" else "Toque para ver a análise e a previsão do mês")
+                    }
+                    Text(if (abrirAnalise) "▲" else "▼", fontSize = 18.sp, color = TextoSuave)
+                }
+                AnimatedVisibility(visible = abrirAnalise) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        insights(lista, anterior, month, saldo).forEach { (emoji, texto) ->
+                            Row(verticalAlignment = Alignment.Top) {
+                                Text(emoji, fontSize = 20.sp)
+                                Spacer(Modifier.width(10.dp))
+                                Text(texto, fontSize = 15.sp, color = TextoForte, modifier = Modifier.weight(1f))
+                            }
+                        }
                     }
                 }
             }
@@ -153,8 +217,8 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
     }
 }
 
-/** Frases simples explicando o mês: comparação, o que mais pesou, maior gasto, previsão. */
-fun insights(lista: List<Expense>, prev: List<Expense>, month: Int): List<Pair<String, String>> {
+/** Frases simples explicando o mês: comparação, o que mais pesou, maior gasto, sobra e previsão. */
+fun insights(lista: List<Expense>, prev: List<Expense>, month: Int, saldo: Saldo): List<Pair<String, String>> {
     val out = mutableListOf<Pair<String, String>>()
     val antAbbr = Dates.abbr(month - 1)
     if (lista.isEmpty()) {
@@ -201,14 +265,34 @@ fun insights(lista: List<Expense>, prev: List<Expense>, month: Int): List<Pair<S
         out.add("🔁" to "Onde você mais comprou: ${l.first().merchant} (${l.size} vezes, ${money(l.sumOf { it.cents })}).")
     }
 
+    val parcelas = lista.filter { it.instTotal > 1 }.sumOf { it.cents }
+    if (parcelas > 0) {
+        out.add("💳" to "Parcelas de compras antigas ocupam ${money(parcelas)} deste mês (${(parcelas * 100.0 / total).roundToInt()}%).")
+    }
+
     val pequenos = lista.filter { it.cents <= 3000 }
     if (pequenos.size >= 5) {
         out.add("☕" to "Gastos pequenos (até R$ 30) somaram ${money(pequenos.sumOf { it.cents })} em ${pequenos.size} compras. Eles se acumulam!")
     }
 
-    if (month == 0 && Dates.today() >= 3) {
-        val proj = total * Dates.daysIn(0) / Dates.today()
-        out.add("🔮" to "Se continuar nesse ritmo, o mês deve fechar em cerca de ${money(proj)}.")
+    if (saldo.renda > 0) {
+        val pct = (total * 100.0 / saldo.renda).roundToInt()
+        out.add("💰" to "Você já gastou $pct% do que entrou" + (if (saldo.estimada) " (entrada estimada)." else "."))
+    }
+
+    saldo.projecaoGasto?.let { proj ->
+        out.add("🔮" to "Se continuar nesse ritmo, o mês deve fechar com cerca de ${money(proj)} em gastos.")
+        saldo.sobraPrevista?.let { s ->
+            if (saldo.renda > 0) {
+                out.add(
+                    (if (s >= 0) "✅" else "⚠️") to
+                        (if (s >= 0) "Previsão de sobra no fim do mês: ${money(s)}." else "Previsão: faltar ${money(-s)} no fim do mês. Vale segurar os gastos.")
+                )
+            }
+        }
+    }
+    saldo.porDia?.let { d ->
+        if (d > 0) out.add("📅" to "Para fechar no azul, gaste até ${money(d)} por dia até o fim do mês.")
     }
     return out
 }

@@ -1,19 +1,30 @@
-# Meus Gastos: versão 2
+# Meus Gastos: versão 3
 
-App Android pessoal que lê as notificações dos bancos, registra cada gasto e separa por categoria.
-Seus dados ficam **só no seu celular**.
+## Novidades da versão 3
+- **💰 Entradas:** registre salário e o que recebe. Pix recebidos, depósitos e salário avisados pelo banco entram sozinhos (pode desligar em Ajustes).
+  O app mostra quanto **entrou, saiu e sobra**, a previsão de sobra no fim do mês e **quanto você pode gastar por dia**.
+- **🎯 Limites por categoria:** defina um limite mensal por categoria. O app avisa ao chegar em 50/60/70/80/90% (você escolhe) e de novo ao passar de 100%.
+- **💳 Compras parceladas:**
+  - Pelo banco: "R$ 300,00 em 3x" vira 3 parcelas de R$ 100,00, uma em cada mês. "10x de R$ 50,00" vira 10 parcelas de R$ 50,00. "Parcela 3/10" lança só essa parcela.
+  - À mão: em Adicionar, ligue **Compra parcelada?**, informe o valor (da parcela ou o total), em quantas vezes e **qual parcela você pagou por último**.
+    O app lança essa parcela e as que faltam nos próximos meses. Se quiser, lança também as anteriores.
+  - A faixa de meses agora mostra os **próximos meses** (⏳) com as parcelas que vão cair.
+  - Ao apagar uma parcela, você escolhe: só ela ou a compra inteira.
+- **📤 Exportar / Backup** agora tem tela própria no menu, fora de Ajustes. O CSV inclui parcelas e entradas.
+- **🏷️ Categorias personalizadas:** crie, renomeie, troque ícone e cor (Menu → Categorias).
+- **🎨 Cores:** Verde Dinheiro, Azul Banco, Ouro, Petróleo, Grafite e Bordô (Ajustes → Cores do app).
+- **Valor sem vírgula:** digite só números. 3 → R$ 0,03 · 333 → R$ 3,33 · 2590 → R$ 25,90.
+- **Relatórios:** "Entenda seus gastos" agora fica recolhido; toque para abrir a análise e a previsão. Nova aba **💰 Sobra** (entradas × gastos).
+- **📲 Indicar o app:** Ajustes → Mais opções → Indicar o app.
 
-**Novidades da versão 2**
-- Menu lateral (botão ☰ no canto de cima, à esquerda) e Ajustes (⚙️ no canto de cima, à direita)
-- Faixa de meses (JUL · AGO · SET · OUT · NOV) com o total de cada mês
-- Relatórios: gráfico por mês, gráfico por dia, rosca por categoria e a seção "Entenda seus gastos"
-- Calendário colorido: quanto mais escuro o dia, mais você gastou
-- Toque em qualquer gasto para corrigir o valor, o nome, a categoria ou para apagar
-- Exportação em CSV (Excel/Planilhas) com resumo, que também serve de backup
-- "Testar o leitor" agora **não grava nada**, então seus gastos não mudam
-- **Atualização automática:** o app avisa quando há versão nova e se atualiza sem perder dados
+## Como atualizar para a versão 3
+1. No GitHub: **Add file → Upload files**, arraste a pasta **`app`** e o **`LEIA-ME.md`** → **Commit changes**.
+2. Espere a aba **Actions** ficar ✅.
+3. Abra o app no celular: aparece **"Nova versão disponível" → Atualizar agora**. Seus gastos continuam salvos.
+   (Se você ainda não instalou a versão 2, siga primeiro a configuração única abaixo.)
 
 ---
+
 
 ## Configuração única (só desta vez)
 

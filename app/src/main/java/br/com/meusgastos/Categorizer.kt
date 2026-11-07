@@ -5,11 +5,6 @@ import java.text.Normalizer
 /** Decide a categoria de um gasto pelo nome do estabelecimento, e aprende com você. */
 object Categorizer {
 
-    val categories = listOf(
-        "Alimentação", "Mercado", "Transporte", "Saúde", "Casa e contas",
-        "Compras", "Lazer", "Educação", "Pessoas (Pix)", "Outros",
-    )
-
     private val defaults: Map<String, List<String>> = mapOf(
         "Alimentação" to listOf(
             "ifood", "rappi", "restaurante", "lanchonete", "padaria", "pizza", "burger", "mcdonald",
@@ -47,20 +42,22 @@ object Categorizer {
     fun norm(s: String): String =
         Normalizer.normalize(s.lowercase(), Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
 
-    /** Retorna a categoria ou null quando não sabe (vira "pendente"). */
+    /** Retorna a categoria ou null quando não sabe (vira "pendente"). Só devolve categorias que existem. */
     fun categorize(db: Db, merchant: String): String? {
+        val existentes = db.categoryNames()
         val m = norm(merchant) + " "
-        db.rules().firstOrNull { m.contains(it.first) }?.let { return it.second }
+        db.rules().firstOrNull { m.contains(it.first) && it.second in existentes }?.let { return it.second }
         for ((cat, words) in defaults) {
-            if (words.any { m.contains(it) }) return cat
+            if (cat in existentes && words.any { m.contains(it) }) return cat
         }
         return null
     }
 
-    /** Você escolheu a categoria: guarda a regra e aplica nos outros pendentes iguais. */
+    /** Você escolheu a categoria: guarda a regra e aplica nos outros pendentes iguais (e nas outras parcelas). */
     fun learn(db: Db, e: Expense, category: String) {
         val key = norm(e.merchant).trim()
         db.setCategory(e.id, category)
+        db.setCategoryPlan(e.planId, category)
         if (key.length < 3) return
         db.addRule(key, category)
         db.pending().filter { norm(it.merchant).contains(key) }.forEach { db.setCategory(it.id, category) }

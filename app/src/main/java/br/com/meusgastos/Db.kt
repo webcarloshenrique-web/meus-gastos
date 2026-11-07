@@ -6,7 +6,10 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
-/** Um gasto. category == null significa "pendente" (ainda sem categoria). */
+/**
+ * Um gasto. category == null significa "pendente" (ainda sem categoria).
+ * Compras parceladas: cada parcela é um gasto no seu mês, com o mesmo planId (instNum de instTotal).
+ */
 data class Expense(
     val id: Long,
     val cents: Long,
@@ -14,38 +17,94 @@ data class Expense(
     val category: String?,
     val dateMs: Long,
     val source: String,
+    val planId: Long = 0,
+    val instNum: Int = 0,
+    val instTotal: Int = 0,
 )
+
+/** Uma entrada de dinheiro (salário, Pix recebido, depósito...). */
+data class Income(
+    val id: Long,
+    val cents: Long,
+    val desc: String,
+    val kind: String,
+    val dateMs: Long,
+    val source: String,
+)
+
+/** Categoria (as padrão e as que você criar). color = ARGB, ex.: 0xFFF4A261 */
+data class Category(val name: String, val emoji: String, val color: Long, val pos: Int)
 
 /** Texto de notificação recebido (para conferência e melhoria do leitor). */
 data class LogEntry(val id: Long, val pkg: String, val text: String, val dateMs: Long, val parsed: Boolean)
 
-/** Banco de dados local (fica só no celular). */
-class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", null, 1) {
+/**
+ * Banco de dados local (fica só no celular).
+ * Regra de segurança: só apaga um gasto quando VOCÊ toca em "Apagar".
+ */
+class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             "CREATE TABLE expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, cents INTEGER NOT NULL, " +
-                "merchant TEXT NOT NULL, category TEXT, date_ms INTEGER NOT NULL, source TEXT NOT NULL)"
+                "merchant TEXT NOT NULL, category TEXT, date_ms INTEGER NOT NULL, source TEXT NOT NULL, " +
+                "plan_id INTEGER NOT NULL DEFAULT 0, inst_num INTEGER NOT NULL DEFAULT 0, inst_total INTEGER NOT NULL DEFAULT 0)"
         )
         db.execSQL("CREATE TABLE rules (keyword TEXT PRIMARY KEY, category TEXT NOT NULL)")
         db.execSQL(
             "CREATE TABLE raw_log (id INTEGER PRIMARY KEY AUTOINCREMENT, pkg TEXT NOT NULL, " +
                 "text TEXT NOT NULL, date_ms INTEGER NOT NULL, parsed INTEGER NOT NULL)"
         )
+        createV2(db)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    /** Atualização da versão 1 para a 2: nada é apagado, só são adicionadas colunas e tabelas. */
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE expenses ADD COLUMN plan_id INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE expenses ADD COLUMN inst_num INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE expenses ADD COLUMN inst_total INTEGER NOT NULL DEFAULT 0")
+            createV2(db)
+        }
+    }
+
+    private fun createV2(db: SQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS incomes (id INTEGER PRIMARY KEY AUTOINCREMENT, cents INTEGER NOT NULL, " +
+                "descr TEXT NOT NULL, kind TEXT NOT NULL, date_ms INTEGER NOT NULL, source TEXT NOT NULL)"
+        )
+        db.execSQL("CREATE TABLE IF NOT EXISTS limits (category TEXT PRIMARY KEY, cents INTEGER NOT NULL)")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS categories (name TEXT PRIMARY KEY, emoji TEXT NOT NULL, " +
+                "color INTEGER NOT NULL, pos INTEGER NOT NULL)"
+        )
+        DEFAULT_CATEGORIES.forEachIndexed { i, (n, e, c) ->
+            db.execSQL(
+                "INSERT OR IGNORE INTO categories (name, emoji, color, pos) VALUES (?, ?, ?, ?)",
+                arrayOf<Any>(n, e, c, i)
+            )
+        }
+    }
 
     // ---------- Gastos ----------
 
-    fun insertExpense(e: Expense): Long {
+    private fun values(e: Expense): ContentValues {
         val cv = ContentValues()
         cv.put("cents", e.cents)
         cv.put("merchant", e.merchant)
         cv.put("category", e.category)
         cv.put("date_ms", e.dateMs)
         cv.put("source", e.source)
-        return writableDatabase.insert("expenses", null, cv)
+        cv.put("plan_id", e.planId)
+        cv.put("inst_num", e.instNum)
+        cv.put("inst_total", e.instTotal)
+        return cv
+    }
+
+    fun insertExpense(e: Expense): Long = writableDatabase.insert("expenses", null, values(e))
+
+    fun update(e: Expense) {
+        writableDatabase.update("expenses", values(e), "id = ?", arrayOf(e.id.toString()))
     }
 
     private fun readExpenses(c: Cursor): List<Expense> {
@@ -60,6 +119,9 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
                         category = if (it.isNull(3)) null else it.getString(3),
                         dateMs = it.getLong(4),
                         source = it.getString(5),
+                        planId = it.getLong(6),
+                        instNum = it.getInt(7),
+                        instTotal = it.getInt(8),
                     )
                 )
             }
@@ -67,7 +129,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         return out
     }
 
-    private val cols = "id, cents, merchant, category, date_ms, source"
+    private val cols = "id, cents, merchant, category, date_ms, source, plan_id, inst_num, inst_total"
 
     fun expenses(fromMs: Long, toMs: Long): List<Expense> = readExpenses(
         readableDatabase.rawQuery(
@@ -76,15 +138,45 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         )
     )
 
+    fun all(): List<Expense> = readExpenses(
+        readableDatabase.rawQuery("SELECT $cols FROM expenses ORDER BY date_ms DESC", null)
+    )
+
     fun pending(): List<Expense> = readExpenses(
         readableDatabase.rawQuery(
-            "SELECT $cols FROM expenses WHERE category IS NULL ORDER BY date_ms DESC", null
+            "SELECT $cols FROM expenses WHERE category IS NULL ORDER BY date_ms ASC", null
         )
     )
 
+    /** Conta compras pendentes (uma compra parcelada conta uma vez só). */
     fun pendingCount(): Int {
-        readableDatabase.rawQuery("SELECT COUNT(*) FROM expenses WHERE category IS NULL", null).use {
+        readableDatabase.rawQuery(
+            "SELECT COUNT(DISTINCT CASE WHEN plan_id > 0 THEN 'p' || plan_id ELSE 'e' || id END) " +
+                "FROM expenses WHERE category IS NULL", null
+        ).use {
             return if (it.moveToFirst()) it.getInt(0) else 0
+        }
+    }
+
+    fun sumBetween(fromMs: Long, toMs: Long): Long = sum(
+        "SELECT COALESCE(SUM(cents), 0) FROM expenses WHERE date_ms >= ? AND date_ms < ?",
+        arrayOf(fromMs.toString(), toMs.toString())
+    )
+
+    fun sumCategory(fromMs: Long, toMs: Long, category: String): Long = sum(
+        "SELECT COALESCE(SUM(cents), 0) FROM expenses WHERE date_ms >= ? AND date_ms < ? AND category = ?",
+        arrayOf(fromMs.toString(), toMs.toString(), category)
+    )
+
+    /** Quanto de parcelas já está marcado para um período. */
+    fun sumInstallments(fromMs: Long, toMs: Long): Long = sum(
+        "SELECT COALESCE(SUM(cents), 0) FROM expenses WHERE plan_id > 0 AND date_ms >= ? AND date_ms < ?",
+        arrayOf(fromMs.toString(), toMs.toString())
+    )
+
+    private fun sum(sql: String, args: Array<String>): Long {
+        readableDatabase.rawQuery(sql, args).use {
+            return if (it.moveToFirst()) it.getLong(0) else 0L
         }
     }
 
@@ -92,17 +184,149 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         writableDatabase.execSQL("UPDATE expenses SET category = ? WHERE id = ?", arrayOf<Any>(category, id))
     }
 
+    fun setCategoryPlan(planId: Long, category: String) {
+        if (planId <= 0) return
+        writableDatabase.execSQL("UPDATE expenses SET category = ? WHERE plan_id = ?", arrayOf<Any>(category, planId))
+    }
+
     fun delete(id: Long) {
         writableDatabase.delete("expenses", "id = ?", arrayOf(id.toString()))
     }
 
+    fun deletePlan(planId: Long) {
+        if (planId <= 0) return
+        writableDatabase.delete("expenses", "plan_id = ?", arrayOf(planId.toString()))
+    }
+
+    fun nextPlanId(): Long = sum("SELECT COALESCE(MAX(plan_id), 0) + 1 FROM expenses", arrayOf())
+
     /** Evita contar duas vezes a mesma notificação (alguns bancos repetem). */
-    fun hasRecent(cents: Long, source: String, sinceMs: Long): Boolean {
+    fun hasRecent(cents: Long, source: String, sinceMs: Long): Boolean = sum(
+        "SELECT COUNT(*) FROM expenses WHERE cents = ? AND source = ? AND date_ms >= ?",
+        arrayOf(cents.toString(), source, sinceMs.toString())
+    ) > 0
+
+    /** Usado ao restaurar backup: não duplica o que já existe. */
+    fun exists(cents: Long, merchant: String, dateMs: Long): Boolean = sum(
+        "SELECT COUNT(*) FROM expenses WHERE cents = ? AND merchant = ? AND date_ms >= ? AND date_ms < ?",
+        arrayOf(cents.toString(), merchant, (dateMs - 60_000).toString(), (dateMs + 60_000).toString())
+    ) > 0
+
+    // ---------- Entradas (receitas) ----------
+
+    fun insertIncome(i: Income): Long {
+        val cv = ContentValues()
+        cv.put("cents", i.cents)
+        cv.put("descr", i.desc)
+        cv.put("kind", i.kind)
+        cv.put("date_ms", i.dateMs)
+        cv.put("source", i.source)
+        return writableDatabase.insert("incomes", null, cv)
+    }
+
+    fun incomes(fromMs: Long, toMs: Long): List<Income> {
+        val out = ArrayList<Income>()
         readableDatabase.rawQuery(
-            "SELECT COUNT(*) FROM expenses WHERE cents = ? AND source = ? AND date_ms >= ?",
-            arrayOf(cents.toString(), source, sinceMs.toString())
+            "SELECT id, cents, descr, kind, date_ms, source FROM incomes WHERE date_ms >= ? AND date_ms < ? ORDER BY date_ms DESC",
+            arrayOf(fromMs.toString(), toMs.toString())
         ).use {
-            return it.moveToFirst() && it.getInt(0) > 0
+            while (it.moveToNext()) {
+                out.add(Income(it.getLong(0), it.getLong(1), it.getString(2), it.getString(3), it.getLong(4), it.getString(5)))
+            }
+        }
+        return out
+    }
+
+    fun allIncomes(): List<Income> = incomes(0, Long.MAX_VALUE)
+
+    fun sumIncome(fromMs: Long, toMs: Long): Long = sum(
+        "SELECT COALESCE(SUM(cents), 0) FROM incomes WHERE date_ms >= ? AND date_ms < ?",
+        arrayOf(fromMs.toString(), toMs.toString())
+    )
+
+    fun deleteIncome(id: Long) {
+        writableDatabase.delete("incomes", "id = ?", arrayOf(id.toString()))
+    }
+
+    fun hasRecentIncome(cents: Long, source: String, sinceMs: Long): Boolean = sum(
+        "SELECT COUNT(*) FROM incomes WHERE cents = ? AND source = ? AND date_ms >= ?",
+        arrayOf(cents.toString(), source, sinceMs.toString())
+    ) > 0
+
+    fun existsIncome(cents: Long, desc: String, dateMs: Long): Boolean = sum(
+        "SELECT COUNT(*) FROM incomes WHERE cents = ? AND descr = ? AND date_ms >= ? AND date_ms < ?",
+        arrayOf(cents.toString(), desc, (dateMs - 60_000).toString(), (dateMs + 60_000).toString())
+    ) > 0
+
+    // ---------- Limites por categoria ----------
+
+    fun limits(): Map<String, Long> {
+        val out = HashMap<String, Long>()
+        readableDatabase.rawQuery("SELECT category, cents FROM limits", null).use {
+            while (it.moveToNext()) out[it.getString(0)] = it.getLong(1)
+        }
+        return out
+    }
+
+    fun setLimit(category: String, cents: Long) {
+        if (cents <= 0) {
+            writableDatabase.delete("limits", "category = ?", arrayOf(category))
+        } else {
+            writableDatabase.execSQL(
+                "INSERT OR REPLACE INTO limits (category, cents) VALUES (?, ?)", arrayOf<Any>(category, cents)
+            )
+        }
+    }
+
+    // ---------- Categorias ----------
+
+    fun categories(): List<Category> {
+        val out = ArrayList<Category>()
+        readableDatabase.rawQuery("SELECT name, emoji, color, pos FROM categories ORDER BY pos, name", null).use {
+            while (it.moveToNext()) out.add(Category(it.getString(0), it.getString(1), it.getLong(2), it.getInt(3)))
+        }
+        return out
+    }
+
+    fun categoryNames(): Set<String> = categories().map { it.name }.toSet()
+
+    /** Cria ou altera uma categoria. Se mudou o nome, atualiza os gastos, regras e limites. */
+    fun saveCategory(c: Category, oldName: String?) {
+        val w = writableDatabase
+        w.beginTransaction()
+        try {
+            if (oldName != null && oldName != c.name) {
+                w.execSQL("UPDATE categories SET name = ? WHERE name = ?", arrayOf<Any>(c.name, oldName))
+                w.execSQL("UPDATE expenses SET category = ? WHERE category = ?", arrayOf<Any>(c.name, oldName))
+                w.execSQL("UPDATE rules SET category = ? WHERE category = ?", arrayOf<Any>(c.name, oldName))
+                w.execSQL("UPDATE OR REPLACE limits SET category = ? WHERE category = ?", arrayOf<Any>(c.name, oldName))
+            }
+            val pos = if (oldName == null) {
+                sum("SELECT COALESCE(MAX(pos), 0) + 1 FROM categories", arrayOf()).toInt()
+            } else c.pos
+            w.execSQL(
+                "INSERT OR REPLACE INTO categories (name, emoji, color, pos) VALUES (?, ?, ?, ?)",
+                arrayOf<Any>(c.name, c.emoji, c.color, pos)
+            )
+            w.setTransactionSuccessful()
+        } finally {
+            w.endTransaction()
+        }
+    }
+
+    /** Apaga uma categoria. Os gastos dela vão para "Outros" (nada é perdido). */
+    fun deleteCategory(name: String) {
+        if (name == FALLBACK_CATEGORY) return
+        val w = writableDatabase
+        w.beginTransaction()
+        try {
+            w.execSQL("UPDATE expenses SET category = ? WHERE category = ?", arrayOf<Any>(FALLBACK_CATEGORY, name))
+            w.execSQL("DELETE FROM rules WHERE category = ?", arrayOf<Any>(name))
+            w.execSQL("DELETE FROM limits WHERE category = ?", arrayOf<Any>(name))
+            w.execSQL("DELETE FROM categories WHERE name = ?", arrayOf<Any>(name))
+            w.setTransactionSuccessful()
+        } finally {
+            w.endTransaction()
         }
     }
 
@@ -154,6 +378,21 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
     }
 
     companion object {
+        const val FALLBACK_CATEGORY = "Outros"
+
+        val DEFAULT_CATEGORIES: List<Triple<String, String, Long>> = listOf(
+            Triple("Alimentação", "🍔", 0xFFF4A261),
+            Triple("Mercado", "🛒", 0xFF2A9D8F),
+            Triple("Transporte", "🚗", 0xFF457B9D),
+            Triple("Saúde", "💊", 0xFFE76F51),
+            Triple("Casa e contas", "🏠", 0xFF8D6E63),
+            Triple("Compras", "🛍️", 0xFF9C4DCC),
+            Triple("Lazer", "🎮", 0xFFE5487D),
+            Triple("Educação", "📚", 0xFF3F51B5),
+            Triple("Pessoas (Pix)", "👤", 0xFF00A5B8),
+            Triple("Outros", "📦", 0xFF78858A),
+        )
+
         @Volatile
         private var inst: Db? = null
 
