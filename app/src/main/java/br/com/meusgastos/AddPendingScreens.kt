@@ -42,8 +42,8 @@ import androidx.compose.ui.unit.sp
 import java.util.Calendar
 import java.util.Date
 
-/** Abre o calendário do Android para escolher um dia (até hoje). */
-fun pickDate(ctx: Context, atual: Long, onPick: (Long) -> Unit) {
+/** Abre o calendário do Android para escolher um dia (até hoje, salvo allowFuture). */
+fun pickDate(ctx: Context, atual: Long, onPick: (Long) -> Unit, allowFuture: Boolean = false) {
     val c = Calendar.getInstance().apply { timeInMillis = atual }
     DatePickerDialog(
         ctx,
@@ -52,7 +52,7 @@ fun pickDate(ctx: Context, atual: Long, onPick: (Long) -> Unit) {
             onPick(n.timeInMillis)
         },
         c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH),
-    ).apply { datePicker.maxDate = System.currentTimeMillis() }.show()
+    ).apply { if (!allowFuture) datePicker.maxDate = System.currentTimeMillis() }.show()
 }
 
 /** Hoje / Ontem / Outro dia */

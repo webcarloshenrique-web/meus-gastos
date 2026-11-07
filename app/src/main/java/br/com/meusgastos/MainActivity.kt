@@ -76,6 +76,7 @@ enum class Screen(val title: String, val emoji: String) {
     CALENDAR("Calendário", "📅"),
     REPORTS("Relatórios", "📊"),
     BACKUP("Exportar / Backup", "📤"),
+    IMPORT("Importar planilha", "📥"),
     LIMITS("Limites", "🎯"),
     CATEGORIES("Categorias", "🏷️"),
     SETTINGS("Ajustes", "⚙️"),
@@ -165,7 +166,7 @@ fun App(start: Screen) {
                         )
                     }
                     Spacer(Modifier.height(10.dp))
-                    listOf(Screen.HOME, Screen.ADD, Screen.INCOME, Screen.PENDING, Screen.CALENDAR, Screen.REPORTS, Screen.BACKUP)
+                    listOf(Screen.HOME, Screen.ADD, Screen.INCOME, Screen.PENDING, Screen.CALENDAR, Screen.REPORTS, Screen.BACKUP, Screen.IMPORT)
                         .forEach { s -> DrawerItem(s, screen == s, if (s == Screen.PENDING) pendentes else 0) { go(s) } }
                     HorizontalDivider(Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
                     listOf(Screen.LIMITS, Screen.CATEGORIES, Screen.SETTINGS)
@@ -204,6 +205,7 @@ fun App(start: Screen) {
                 Screen.CALENDAR -> CalendarScreen(db, pad, month, setMonth)
                 Screen.REPORTS -> ReportsScreen(db, pad, month, setMonth)
                 Screen.BACKUP -> BackupScreen(db, pad, month)
+                Screen.IMPORT -> ImportScreen(db, pad)
                 Screen.LIMITS -> LimitsScreen(db, pad)
                 Screen.CATEGORIES -> CategoriesScreen(db, pad)
                 Screen.SETTINGS -> SettingsScreen(db, pad) { go(it) }

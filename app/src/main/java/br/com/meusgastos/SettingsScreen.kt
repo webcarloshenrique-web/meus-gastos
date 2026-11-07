@@ -248,6 +248,7 @@ fun SettingsScreen(db: Db, pad: PaddingValues, go: (Screen) -> Unit) {
                 OutlinedButton(onClick = { go(Screen.LIMITS) }, modifier = Modifier.fillMaxWidth()) { Text("🎯 Limites por categoria") }
                 OutlinedButton(onClick = { go(Screen.CATEGORIES) }, modifier = Modifier.fillMaxWidth()) { Text("🏷️ Categorias personalizadas") }
                 OutlinedButton(onClick = { go(Screen.BACKUP) }, modifier = Modifier.fillMaxWidth()) { Text("📤 Exportar gastos / backup") }
+                OutlinedButton(onClick = { go(Screen.IMPORT) }, modifier = Modifier.fillMaxWidth()) { Text("📥 Importar planilha") }
                 OutlinedButton(onClick = { shareApp(ctx) }, modifier = Modifier.fillMaxWidth()) { Text("📲 Indicar o app para alguém") }
             }
         }

@@ -189,23 +189,93 @@ fun shareApp(ctx: Context) {
     ctx.startActivity(Intent.createChooser(send, "Indicar o Meus Gastos"))
 }
 
+/** Janela com o resultado de uma importação. */
+@Composable
+fun ImportResultDialog(r: Planilha.Resultado, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (!r.reconhecido) "⚠️ Planilha não reconhecida" else if (r.gastos + r.entradas > 0) "✅ Importação concluída" else "Nada novo para importar") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (!r.reconhecido) {
+                    Text("Não encontrei a linha de cabeçalho (precisa ter pelo menos as colunas \"Data\" e \"Valor\"). Baixe o modelo em 📥 Importar planilha.")
+                } else {
+                    Text("🧾 Gastos importados: ${r.gastos}")
+                    Text("💰 Entradas importadas: ${r.entradas}")
+                    if (r.repetidas > 0) Text("🔁 Já existiam (ignoradas): ${r.repetidas}")
+                }
+                if (r.erros.isNotEmpty()) {
+                    Text("❌ Linhas com problema: ${r.erros.size}", fontWeight = FontWeight.Bold, color = Vermelho)
+                    r.erros.take(8).forEach { Hint(it) }
+                    if (r.erros.size > 8) Hint("… e mais ${r.erros.size - 8}")
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
+    )
+}
+
+@Composable
+fun DateButton(rotulo: String, data: Long, modifier: Modifier = Modifier, onPick: (Long) -> Unit) {
+    val ctx = LocalContext.current
+    Column(
+        modifier.clip(RoundedCornerShape(14.dp)).background(Fundo)
+            .border(1.dp, Linha, RoundedCornerShape(14.dp))
+            .clickable { pickDate(ctx, data, onPick, allowFuture = true) }
+            .padding(12.dp)
+    ) {
+        Hint(rotulo)
+        Text(dayFmt.format(Date(data)) + "/" + java.util.Calendar.getInstance().apply { timeInMillis = data }.get(java.util.Calendar.YEAR), fontSize = 17.sp, fontWeight = FontWeight.Bold, color = TextoForte)
+    }
+}
+
+private fun inicioDoDia(ms: Long): Long = java.util.Calendar.getInstance().apply {
+    timeInMillis = ms; set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+    set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+}.timeInMillis
+
 @Composable
 fun BackupScreen(db: Db, pad: PaddingValues, month: Int) {
     val ctx = LocalContext.current
+    var periodo by remember { mutableIntStateOf(0) } // 0 = mês, 1 = escolher datas, 2 = tudo
+    var de by remember { mutableLongStateOf(Dates.range(month).first) }
+    var ate by remember { mutableLongStateOf(minOf(System.currentTimeMillis(), Dates.range(month).second - 1)) }
+    var excel by remember { mutableStateOf(true) }
+    var arquivo by remember { mutableStateOf<java.io.File?>(null) }
+    var resultado by remember { mutableStateOf<Planilha.Resultado?>(null) }
+
+    val salvarXlsx = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(Planilha.MIME_XLSX)) { uri: Uri? ->
+        val f = arquivo
+        if (uri != null && f != null) Toast.makeText(ctx, if (Planilha.salvarEm(ctx, f, uri)) "Arquivo salvo ✅" else "Não consegui salvar", Toast.LENGTH_SHORT).show()
+    }
+    val salvarCsv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(Planilha.MIME_CSV)) { uri: Uri? ->
+        val f = arquivo
+        if (uri != null && f != null) Toast.makeText(ctx, if (Planilha.salvarEm(ctx, f, uri)) "Arquivo salvo ✅" else "Não consegui salvar", Toast.LENGTH_SHORT).show()
+    }
     val restaurar = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
-            val n = try { Csv.restore(ctx, db, uri) } catch (_: Exception) { -1 }
+            resultado = Planilha.importar(ctx, db, uri)
+            Cats.load(db)
             Bus.bump()
-            val msg = when {
-                n < 0 -> "Esse arquivo não é um backup do Meus Gastos."
-                n == 0 -> "Nada novo para restaurar (já estava tudo aqui)."
-                else -> "✅ $n registros restaurados!"
-            }
-            Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
         }
     }
-    fun exportar(kind: Int) {
-        if (!Csv.export(ctx, db, kind, month)) Toast.makeText(ctx, "Não há registros nesse período.", Toast.LENGTH_SHORT).show()
+
+    fun gerar(): java.io.File? {
+        val (ini, fim, texto, nome) = when (periodo) {
+            0 -> { val r = Dates.range(month); Quatro(r.first, r.second, Dates.full(month), "gastos_${Dates.year(month)}_${Dates.abbr(month)}") }
+            1 -> {
+                val a = inicioDoDia(minOf(de, ate))
+                val b = inicioDoDia(maxOf(de, ate)) + Dates.DAY_MS
+                val fmt = java.text.SimpleDateFormat("dd-MM-yyyy", ptBR)
+                Quatro(a, b, "${fullDayFmt.format(Date(a)).substringAfter(", ")} a ${fullDayFmt.format(Date(b - 1)).substringAfter(", ")}",
+                    "gastos_${fmt.format(Date(a))}_a_${fmt.format(Date(b - 1))}")
+            }
+            else -> Quatro(0L, Long.MAX_VALUE, "Todos os registros", "gastos_todos")
+        }
+        val f = Planilha.exportar(ctx, db, ini, fim, texto, nome, excel)
+        if (f == null) Toast.makeText(ctx, "Não há registros nesse período.", Toast.LENGTH_SHORT).show()
+        arquivo = f
+        return f
     }
 
     Column(
@@ -213,23 +283,42 @@ fun BackupScreen(db: Db, pad: PaddingValues, month: Int) {
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         AppCard {
-            SectionTitle("📤 Exportar gastos")
-            Hint("Gera uma planilha (CSV) que abre no Excel ou no Google Planilhas: data, categoria, estabelecimento, parcela, valor, um resumo e as entradas. Você escolhe para onde enviar: WhatsApp, e-mail, Drive…")
-            Button(
-                onClick = { exportar(0) }, modifier = Modifier.fillMaxWidth().height(52.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Verde),
-            ) { Text("📅 ${Dates.full(month)}") }
-            OutlinedButton(onClick = { exportar(1) }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Text("🗓️ Últimos 5 meses (${Dates.abbr(month - 4)} a ${Dates.abbr(month)})")
+            SectionTitle("📅 Qual período?")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Chip("${Dates.abbr(month)}/${Dates.year(month)}", periodo == 0, Modifier.weight(1f)) { periodo = 0 }
+                Chip("De … até", periodo == 1, Modifier.weight(1f)) { periodo = 1 }
+                Chip("Tudo", periodo == 2, Modifier.weight(1f)) { periodo = 2 }
             }
-            OutlinedButton(onClick = { exportar(2) }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Text("📚 Tudo (serve de backup completo)")
+            if (periodo == 1) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DateButton("De", de, Modifier.weight(1f)) { de = it }
+                    DateButton("Até", ate, Modifier.weight(1f)) { ate = it }
+                }
+                Hint("Ex.: de 15/10 até 30/11. Toque na data para mudar.")
             }
-            Hint("Para outro mês, escolha o mês no Início e volte aqui.")
+            if (periodo == 0) Hint("Para outro mês, escolha o mês no Início e volte aqui.")
         }
         AppCard {
+            SectionTitle("📄 Formato")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Chip("📗 Excel (.xlsx)", excel, Modifier.weight(1f)) { excel = true }
+                Chip("📄 CSV", !excel, Modifier.weight(1f)) { excel = false }
+            }
+            Hint("A planilha tem uma aba com os lançamentos (gastos e entradas, com data, categoria, estabelecimento, parcela e valor) e outra com o resumo. Ela também serve de backup.")
+        }
+        Button(
+            onClick = { gerar()?.let { Planilha.compartilhar(ctx, it, "Meus Gastos — ${it.nameWithoutExtension}") } },
+            modifier = Modifier.fillMaxWidth().height(54.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Verde),
+        ) { Text("📤 Compartilhar (WhatsApp, e-mail, Drive…)", fontSize = 16.sp) }
+        OutlinedButton(
+            onClick = { gerar()?.let { f -> if (excel) salvarXlsx.launch(f.name) else salvarCsv.launch(f.name) } },
+            modifier = Modifier.fillMaxWidth().height(54.dp),
+        ) { Text("💾 Salvar no celular", fontSize = 16.sp) }
+
+        AppCard {
             SectionTitle("📥 Restaurar backup")
-            Hint("Escolha um arquivo CSV exportado pelo Meus Gastos. Só adiciona o que estiver faltando; nada é apagado.")
+            Hint("Escolha uma planilha exportada pelo Meus Gastos (Excel ou CSV). Só adiciona o que estiver faltando; nada é apagado.")
             OutlinedButton(onClick = { restaurar.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                 Text("Escolher arquivo de backup")
             }
@@ -239,6 +328,94 @@ fun BackupScreen(db: Db, pad: PaddingValues, month: Int) {
             Hint("Uma vez por mês, exporte \"Tudo\" e guarde no Google Drive. Se trocar de celular, é só restaurar.")
         }
     }
+
+    resultado?.let { r -> ImportResultDialog(r) { resultado = null } }
+}
+
+private data class Quatro(val a: Long, val b: Long, val c: String, val d: String)
+
+// ============================================================ Importar planilha
+
+@Composable
+fun ImportScreen(db: Db, pad: PaddingValues) {
+    val ctx = LocalContext.current
+    var resultado by remember { mutableStateOf<Planilha.Resultado?>(null) }
+    var modelo by remember { mutableStateOf<java.io.File?>(null) }
+    val salvarModelo = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(Planilha.MIME_XLSX)) { uri: Uri? ->
+        val f = modelo
+        if (uri != null && f != null) Toast.makeText(ctx, if (Planilha.salvarEm(ctx, f, uri)) "Modelo salvo ✅" else "Não consegui salvar", Toast.LENGTH_SHORT).show()
+    }
+    val importar = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            resultado = Planilha.importar(ctx, db, uri)
+            Cats.load(db)
+            Bus.bump()
+        }
+    }
+    val colunas = listOf(
+        Triple("Tipo", "Gasto ou Entrada (vazio = Gasto)", "Gasto"),
+        Triple("Data ✱", "Dia do gasto ou da entrada", "15/11/2026"),
+        Triple("Hora", "Opcional", "14:30"),
+        Triple("Descrição", "Onde gastou / de onde veio", "Padaria"),
+        Triple("Categoria", "Uma categoria do app. Vazio = o app adivinha", "Alimentação"),
+        Triple("Valor (R$) ✱", "Parcelado: valor de UMA parcela", "25,90"),
+        Triple("Parcela atual", "Só se for parcelado: a última paga", "4"),
+        Triple("Total de parcelas", "Só se for parcelado", "10"),
+        Triple("Criar próximas parcelas?", "Sim = cria as que faltam nos próximos meses", "Sim"),
+    )
+
+    Column(
+        Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        AppCard {
+            SectionTitle("📥 Trazer gastos de uma planilha")
+            Text("1️⃣  Baixe o modelo abaixo.", fontSize = 15.sp, color = TextoForte)
+            Text("2️⃣  Preencha no Excel, Google Planilhas ou WPS (uma linha por gasto ou entrada).", fontSize = 15.sp, color = TextoForte)
+            Text("3️⃣  Volte aqui e toque em \"Importar planilha\".", fontSize = 15.sp, color = TextoForte)
+            Hint("Também aceita planilhas exportadas pelo próprio app.")
+        }
+        AppCard {
+            SectionTitle("📗 Modelo")
+            Hint("Já vem com os cabeçalhos certos, exemplos e uma aba \"Como preencher\".")
+            Button(
+                onClick = { val f = Planilha.modelo(ctx); modelo = f; Planilha.compartilhar(ctx, f, "Modelo — Meus Gastos") },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Verde),
+            ) { Text("📤 Enviar modelo (WhatsApp, e-mail, Drive…)") }
+            OutlinedButton(
+                onClick = { val f = Planilha.modelo(ctx); modelo = f; salvarModelo.launch(f.name) },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) { Text("💾 Salvar modelo no celular") }
+        }
+        AppCard {
+            SectionTitle("🧩 Colunas da planilha")
+            Hint("A 1ª linha precisa ter estes nomes. ✱ = obrigatória. A ordem das colunas pode mudar.")
+            colunas.forEach { (nome, explica, ex) ->
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Fundo).padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(nome, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextoForte)
+                        Hint(explica)
+                    }
+                    Text(ex, fontSize = 13.sp, color = Verde, fontWeight = FontWeight.Medium)
+                }
+            }
+            Hint("Valores aceitos: 25,90 · R$ 25,90 · 1.234,56. Datas: 15/11/2026 ou 2026-11-15. Categoria que não existe é criada sozinha.")
+        }
+        Button(
+            onClick = { importar.launch(arrayOf("*/*")) },
+            modifier = Modifier.fillMaxWidth().height(58.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Verde),
+        ) { Text("📥 Importar planilha (.xlsx ou .csv)", fontSize = 17.sp) }
+        Hint("Importar o mesmo arquivo duas vezes não duplica: linhas iguais são ignoradas.")
+        Spacer(Modifier.height(16.dp))
+    }
+
+    resultado?.let { r -> ImportResultDialog(r) { resultado = null } }
 }
 
 // ============================================================ Limites por categoria
