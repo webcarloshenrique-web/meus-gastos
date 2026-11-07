@@ -264,7 +264,7 @@ fun MoneyField(
 ) {
     val text = if (cents == 0L) "" else String.format(ptBR, "%,.2f", cents / 100.0)
     val size = if (big) 28.sp else 18.sp
-    val rotulo: (@Composable () -> Unit)? = if (label == null) null else @Composable { Text(label) }
+    val rotulo: (@Composable () -> Unit)? = if (label == null) null else ({ Text(label) })
     OutlinedTextField(
         value = TextFieldValue(text, selection = TextRange(text.length)),
         onValueChange = { v ->
