@@ -240,6 +240,13 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         writableDatabase.delete("expenses", "plan_id = ?", arrayOf(planId.toString()))
     }
 
+    /** Apaga as parcelas de uma mesma compra (mesmo nome, valor da parcela e total de parcelas). */
+    fun deleteSamePurchase(merchant: String, cents: Long, total: Int): Int =
+        writableDatabase.delete(
+            "expenses", "merchant = ? AND cents = ? AND inst_total = ? AND inst_total > 1",
+            arrayOf(merchant, cents.toString(), total.toString())
+        )
+
     fun nextPlanId(): Long = sum("SELECT COALESCE(MAX(plan_id), 0) + 1 FROM expenses", arrayOf())
 
     /** Evita contar duas vezes a mesma notificação (alguns bancos repetem). */

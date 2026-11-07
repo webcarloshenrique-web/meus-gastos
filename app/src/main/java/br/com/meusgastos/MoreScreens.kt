@@ -203,6 +203,7 @@ fun ImportResultDialog(r: Planilha.Resultado, onDismiss: () -> Unit) {
                     if (r.removidos > 0) Text("🔄 Importação anterior substituída (${r.removidos} registros removidos)")
                     Text("🧾 Gastos importados: ${r.gastos}")
                     Text("💰 Entradas importadas: ${r.entradas}")
+                    if (r.atualizadas > 0) Text("💳 Compras parceladas atualizadas: ${r.atualizadas}")
                     if (r.repetidas > 0) Text("🔁 Já existiam (ignoradas): ${r.repetidas}")
                 }
                 if (r.erros.isNotEmpty()) {

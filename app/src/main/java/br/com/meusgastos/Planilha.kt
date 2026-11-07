@@ -456,6 +456,7 @@ object Planilha {
         val erros: List<String>,
         val reconhecido: Boolean,
         val removidos: Int = 0,
+        val atualizadas: Int = 0,
     )
 
     private fun n(s: String) = Categorizer.norm(s).trim()
@@ -591,6 +592,7 @@ object Planilha {
         var gastos = 0
         var entradas = 0
         var repetidas = 0
+        var atualizadas = 0
         val erros = ArrayList<String>()
         val categorias = db.categoryNames().associateBy { n(it) }.toMutableMap()
         val planos = HashMap<String, Long>()
@@ -644,11 +646,34 @@ object Planilha {
                     catTxt
                 }
             }
-            if (db.exists(valor, desc, data)) { repetidas++; return@forEachIndexed }
             val pay = Pagamento.normalizar(cel("pay"))
 
+            // Parcelas: aceita "4" e "10" em colunas separadas, ou "4/10" numa coluna só
+            var atual = cel("atual").substringBefore('.').toIntOrNull() ?: 0
+            var total = cel("total").substringBefore('.').toIntOrNull() ?: 0
+            val barra = Regex("""(\d+)\s*/\s*(\d+)""").find(cel("atual"))
+            if (barra != null) { atual = barra.groupValues[1].toInt(); total = barra.groupValues[2].toInt() }
+            val criar = n(cel("criar")).startsWith("s")
+            val ehFixo = n(cel("fixo")).startsWith("s")
+
+            // Compra parcelada com "Criar próximas parcelas = Sim": substitui a versão antiga da mesma compra
+            // (assim, corrigir a planilha e importar de novo sempre arruma os meses).
+            if (!ehFixo && criar && total in 2..48) {
+                atual = atual.coerceIn(1, total)
+                if (db.deleteSamePurchase(desc, valor, total) > 0) atualizadas++
+                // Data = data da COMPRA (1ª parcela): a parcela atual cai (atual - 1) meses depois.
+                // Se isso der muito no futuro, entende a data como o pagamento da parcela atual.
+                val naParcelaAtual = Calendar.getInstance().apply { timeInMillis = data; add(Calendar.MONTH, atual - 1) }.timeInMillis
+                val base = if (naParcelaAtual <= System.currentTimeMillis() + 31L * Dates.DAY_MS) naParcelaAtual else data
+                Installments.register(db, desc, categoria, base, fonte, valor, total, from = atual, pay = pay)
+                gastos++
+                return@forEachIndexed
+            }
+
+            if (db.exists(valor, desc, data)) { repetidas++; return@forEachIndexed }
+
             // Gasto fixo: liga a um fixo existente (mesmo nome e valor) ou cria um novo
-            if (n(cel("fixo")).startsWith("s")) {
+            if (ehFixo) {
                 val ym = Recorrentes.ym(data)
                 val existente = db.recurring().firstOrNull { n(it.merchant) == n(desc) && it.cents == valor }
                 if (existente == null) {
@@ -661,22 +686,9 @@ object Planilha {
                 return@forEachIndexed
             }
 
-            // Parcelas: aceita "4" e "10" em colunas separadas, ou "4/10" numa coluna só
-            var atual = cel("atual").substringBefore('.').toIntOrNull() ?: 0
-            var total = cel("total").substringBefore('.').toIntOrNull() ?: 0
-            val barra = Regex("""(\d+)\s*/\s*(\d+)""").find(cel("atual"))
-            if (barra != null) { atual = barra.groupValues[1].toInt(); total = barra.groupValues[2].toInt() }
-            val criar = n(cel("criar")).startsWith("s")
-
             if (total in 2..48) {
                 atual = atual.coerceIn(1, total)
-                if (criar) {
-                    // Data = data da COMPRA (1ª parcela): a parcela atual cai (atual - 1) meses depois.
-                    // Se isso der muito no futuro, entende a data como o pagamento da parcela atual.
-                    val naParcelaAtual = Calendar.getInstance().apply { timeInMillis = data; add(Calendar.MONTH, atual - 1) }.timeInMillis
-                    val base = if (naParcelaAtual <= System.currentTimeMillis() + 31L * Dates.DAY_MS) naParcelaAtual else data
-                    Installments.register(db, desc, categoria, base, fonte, valor, total, from = atual, pay = pay)
-                } else {
+                run {
                     val chave = "$desc|$total|$valor"
                     val plano = planos.getOrPut(chave) { db.nextPlanId() }
                     db.insertExpense(Expense(0, valor, desc, categoria, data, fonte, plano, atual, total, pay = pay))
@@ -686,6 +698,6 @@ object Planilha {
             }
             gastos++
         }
-        return Resultado(gastos, entradas, repetidas, erros, reconhecido, removidos)
+        return Resultado(gastos, entradas, repetidas, erros, reconhecido, removidos, atualizadas)
     }
 }
