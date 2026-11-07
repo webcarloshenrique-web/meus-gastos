@@ -36,7 +36,8 @@ import androidx.compose.ui.unit.sp
 fun CalendarScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit) {
     val tick = Bus.tick.intValue
     val range = remember(month) { Dates.range(month) }
-    val lista = remember(tick, month) { db.expenses(range.first, range.second) }
+    val lista = remember(tick, month) { db.expenses(range.first, range.second) + Recorrentes.previstos(db, month) }
+    var irParaFixos by remember { mutableStateOf(false) }
     val dim = Dates.daysIn(month)
     val primeiro = Dates.firstWeekday(month)
     val porDia = remember(lista, dim) {
@@ -115,7 +116,7 @@ fun CalendarScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Uni
                     val doDia = lista.filter { Dates.dayOfMonth(it.dateMs) == diaSel }
                     SectionTitle("Dia $diaSel · ${money(porDia[diaSel - 1])}")
                     if (doDia.isEmpty()) Hint("Nenhum gasto neste dia.")
-                    doDia.forEach { e -> ExpenseItem(e) { editando = e } }
+                    doDia.forEach { e -> ExpenseItem(e) { if (e.source == Recorrentes.PREVISTO) irParaFixos = true else editando = e } }
                 } else {
                     Hint("Toque em um dia para ver os gastos.")
                 }
@@ -124,4 +125,12 @@ fun CalendarScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Uni
     }
 
     editando?.let { e -> EditExpenseDialog(db, e) { editando = null } }
+    if (irParaFixos) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { irParaFixos = false },
+            title = { Text("⏳ Gasto fixo previsto") },
+            text = { Text("Ele será lançado sozinho no dia do vencimento. Para mudar valor ou dia, abra Menu → Gastos fixos.") },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { irParaFixos = false }) { Text("OK") } },
+        )
+    }
 }

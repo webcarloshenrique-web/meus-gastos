@@ -42,17 +42,26 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
     val ctx = LocalContext.current
     val tick = Bus.tick.intValue
     val range = remember(month) { Dates.range(month) }
-    val lista = remember(tick, month) { db.expenses(range.first, range.second) }
+    val reais = remember(tick, month) { db.expenses(range.first, range.second) }
+    val previstos = remember(tick, month) { Recorrentes.previstos(db, month) }
+    val aVencer = previstos.sumOf { it.cents }
+    // Meses futuros: parcelas + fixos previstos, tudo junto. Mês atual: só o que já aconteceu.
+    val lista = if (month > 0) (reais + previstos).sortedByDescending { it.dateMs } else reais
     val prevTotal = remember(tick, month) { val r = Dates.range(month - 1); db.sumBetween(r.first, r.second) }
     val meses = (month - 4..month).toList()
-    val last5 = remember(tick, month) { meses.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) } }
+    val last5 = remember(tick, month) {
+        meses.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) + if (o > 0) Recorrentes.totalPrevisto(db, o) else 0L }
+    }
     val pendentes = remember(tick) { db.pendingCount() }
     val saldo = remember(tick, month) { Budget.saldo(db, month) }
     val limites = remember(tick) { db.limits() }
     val alertPct = remember(tick) { Prefs.alertPct(ctx) }
     val proximas = remember(tick, month) {
-        (1..3).map { k -> val r = Dates.range(month + k); (month + k) to db.sumInstallments(r.first, r.second) }
-            .filter { it.second > 0 }
+        (1..3).map { k ->
+            val o = month + k
+            val r = Dates.range(o)
+            Triple(o, db.sumInstallments(r.first, r.second), Recorrentes.totalPrevisto(db, o))
+        }.filter { it.second + it.third > 0 }
     }
     val fixos = remember(tick) { db.recurring().filter { it.active } }
     val fixosLancados = remember(tick, month) { db.sumFixed(range.first, range.second) }
@@ -77,7 +86,7 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        if (month > 0) "Já marcado para ${Dates.full(month)}" else "Gasto em ${Dates.full(month)}",
+                        if (month > 0) "Previsto para ${Dates.full(month)}" else "Gasto em ${Dates.full(month)}",
                         color = Color.White.copy(alpha = 0.9f), fontSize = 15.sp,
                     )
                     Text(money(total), color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold)
@@ -88,8 +97,15 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
                             val seta = if (diff > 0) "▲" else if (diff < 0) "▼" else "="
                             Pill("$seta $pct% vs ${Dates.abbr(month - 1)}")
                         }
-                        Pill(if (month > 0) "💳 parcelas futuras" else "🧾 ${lista.size} gastos")
+                        if (month > 0) {
+                            val parc = reais.filter { it.instTotal > 1 }.sumOf { it.cents }
+                            if (parc > 0) Pill("💳 parcelas ${compact(parc)}")
+                            if (aVencer > 0) Pill("🔁 fixos ${compact(aVencer)}")
+                        } else {
+                            Pill("🧾 ${lista.size} gastos")
+                        }
                     }
+                    if (month == 0 && aVencer > 0) Pill("⏳ Ainda vão vencer: ${money(aVencer)} em fixos")
                     saldo.projecaoGasto?.let { Pill("🔮 Previsão de gastos: ${money(it)}") }
                 }
             }
@@ -218,13 +234,16 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
         if (proximas.isNotEmpty()) {
             item {
                 AppCard(Modifier.padding(horizontal = 16.dp)) {
-                    SectionTitle("💳 Parcelas já marcadas")
-                    Hint("Compras parceladas que vão cair nos próximos meses")
+                    SectionTitle("📆 Próximos meses")
+                    Hint("O que já está comprometido: parcelas + gastos fixos previstos. Toque para abrir o mês.")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        proximas.forEach { (o, v) ->
-                            StatBox(Dates.abbr(o), compact(v), Modifier.weight(1f).clickable { onMonth(o) }, Laranja)
+                        proximas.forEach { (o, parc, fix) ->
+                            StatBox(Dates.abbr(o), compact(parc + fix), Modifier.weight(1f).clickable { onMonth(o) }, Laranja)
                         }
                         repeat(3 - proximas.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                    proximas.firstOrNull()?.let { (o, parc, fix) ->
+                        Hint("${Dates.abbr(o)}: 💳 parcelas ${compact(parc)} · 🔁 fixos ${compact(fix)}")
                     }
                 }
             }
@@ -277,9 +296,11 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
         if (lista.isNotEmpty()) {
             item {
                 AppCard(Modifier.padding(horizontal = 16.dp)) {
-                    SectionTitle(if (month > 0) "💳 Parcelas deste mês" else "🕒 Últimos gastos")
-                    Hint("Toque em um gasto para corrigir ou apagar")
-                    lista.take(8).forEach { e -> ExpenseItem(e) { editando = e } }
+                    SectionTitle(if (month > 0) "📆 Previsto para este mês" else "🕒 Últimos gastos")
+                    Hint(if (month > 0) "⏳ previsto = gasto fixo que ainda vai vencer" else "Toque em um gasto para corrigir ou apagar")
+                    lista.take(if (month > 0) 15 else 8).forEach { e ->
+                        ExpenseItem(e) { if (e.source == Recorrentes.PREVISTO) go(Screen.FIXED) else editando = e }
+                    }
                     if (lista.size > 8) {
                         TextButton(onClick = { go(Screen.CALENDAR) }) { Text("Ver todos no calendário ›", fontSize = 15.sp) }
                     }

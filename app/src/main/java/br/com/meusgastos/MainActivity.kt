@@ -272,7 +272,7 @@ fun UpdateDialogHost() {
         title = { Text("🎉 Nova versão disponível") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("A versão ${info.version} está pronta. Seus gastos continuam salvos.")
+                Text("A versão ${info.name.ifBlank { info.version.toString() }} está pronta. Seus gastos continuam salvos.")
                 if (info.notes.isNotBlank()) Text(info.notes.take(400), fontSize = 13.sp, color = TextoSuave)
                 if (UpdateUi.status.isNotEmpty()) Text(UpdateUi.status, fontWeight = FontWeight.Medium)
                 if (UpdateUi.busy) LinearProgressIndicator(Modifier.fillMaxWidth())

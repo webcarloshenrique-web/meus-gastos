@@ -33,6 +33,9 @@ jobs:
           fi
           echo "$KEYSTORE_BASE64" | base64 -d > app/release.keystore
 
+      - name: Número da versão (ano.compilação)
+        run: echo "VERSAO=$(( $(date +%Y) - 2025 )).${{ github.run_number }}" >> $GITHUB_ENV
+
       - name: Compilar o app
         run: gradle assembleRelease --no-daemon --stacktrace
 
@@ -49,6 +52,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
-          name: Versão ${{ github.run_number }}
+          name: Versão ${{ env.VERSAO }}
           body: ${{ github.event.head_commit.message }}
           files: meus-gastos.apk

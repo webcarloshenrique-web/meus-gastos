@@ -16,7 +16,7 @@ import java.net.URL
  * baixa o APK e abre o instalador do Android. Os gastos continuam salvos.
  */
 object Updater {
-    data class Info(val version: Int, val url: String, val notes: String)
+    data class Info(val version: Int, val url: String, val notes: String, val name: String = "")
 
     private const val UA = "MeusGastos-App"
 
@@ -40,7 +40,11 @@ object Updater {
                     if (a.optString("name").endsWith(".apk")) url = a.optString("browser_download_url")
                 }
             }
-            if (v == null || url == null) null else Info(v, url, j.optString("body").takeIf { it != "null" }?.lineSequence()?.firstOrNull()?.trim() ?: "")
+            if (v == null || url == null) null else Info(
+                v, url,
+                j.optString("body").takeIf { it != "null" }?.lineSequence()?.firstOrNull()?.trim() ?: "",
+                j.optString("name").removePrefix("Versão").trim(),
+            )
         }
     } catch (_: Exception) {
         null

@@ -287,7 +287,12 @@ fun MoneyField(
 fun MonthStrip(db: Db, selected: Int, onSelect: (Int) -> Unit) {
     val tick = Bus.tick.intValue
     val offsets = remember { (MIN_MONTH..MAX_MONTH).toList() }
-    val totais = remember(tick) { offsets.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) } }
+    val totais = remember(tick) {
+        offsets.map { o ->
+            val r = Dates.range(o)
+            db.sumBetween(r.first, r.second) + if (o > 0) Recorrentes.totalPrevisto(db, o) else 0L
+        }
+    }
     val idx = selected - MIN_MONTH
     val state = rememberLazyListState(initialFirstVisibleItemIndex = (idx - 2).coerceAtLeast(0))
     LaunchedEffect(selected) { state.animateScrollToItem((idx - 2).coerceAtLeast(0)) }
@@ -456,11 +461,18 @@ fun ExpenseItem(e: Expense, onClick: () -> Unit) {
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             val parc = if (e.instTotal > 1) " · ${e.instNum}/${e.instTotal}x" else ""
-            val fixo = if (e.fixedId > 0) " · 🔁 fixo" else ""
+            val fixo = when {
+                e.source == Recorrentes.PREVISTO -> " · ⏳ previsto (fixo)"
+                e.fixedId > 0 -> " · 🔁 fixo"
+                else -> ""
+            }
             val pg = if (e.pay.isNotBlank()) " · ${Pagamento.emoji(e.pay)} ${e.pay}" else ""
             Text("${cat.name} · ${dayFmt.format(Date(e.dateMs))}$parc$fixo$pg", fontSize = 13.sp, color = TextoSuave, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Text(money(e.cents), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextoForte)
+        Text(
+            money(e.cents), fontSize = 16.sp, fontWeight = FontWeight.Bold,
+            color = if (e.source == Recorrentes.PREVISTO) Laranja else TextoForte,
+        )
     }
 }
 

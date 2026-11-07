@@ -6,6 +6,8 @@ plugins {
 
 // O GitHub informa o número da compilação: vira o número da versão do app.
 val runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+// Versão acompanha o ano: 2026 = 1, 2027 = 2... Ex.: 1.12
+val anoVersao = java.time.Year.now().value - 2025
 val repo = System.getenv("GITHUB_REPOSITORY") ?: "webcarloshenrique-web/meus-gastos"
 
 android {
@@ -17,7 +19,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = runNumber
-        versionName = "3.$runNumber"
+        versionName = "$anoVersao.$runNumber"
         buildConfigField("String", "REPO", "\"$repo\"")
     }
 

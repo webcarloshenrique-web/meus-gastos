@@ -249,6 +249,25 @@ object Recorrentes {
         return true
     }
 
+    /**
+     * Fixos que ainda vão vencer no mês [offset] (0 = atual). Não são gravados: aparecem como "⏳ previsto"
+     * e viram gasto de verdade no dia do vencimento.
+     */
+    fun previstos(db: Db, offset: Int): List<Expense> {
+        val (a, b) = Dates.range(offset)
+        val ymv = ym(a)
+        val agora = System.currentTimeMillis()
+        return db.recurring().filter { it.active && ymv > it.lastYm && ymv >= ym(it.startMs) }.mapNotNull { r ->
+            val data = dataNoMes(ymv, r.day)
+            if (data <= agora || data < a || data >= b) null
+            else Expense(-(r.id * 1000 + (ymv % 1000)), r.cents, r.merchant, r.category, data, PREVISTO, pay = r.pay, fixedId = r.id)
+        }
+    }
+
+    fun totalPrevisto(db: Db, offset: Int): Long = previstos(db, offset).sumOf { it.cents }
+
+    const val PREVISTO = "previsto"
+
     /** Quanto os fixos ativos somam por mês. */
     fun totalMensal(db: Db): Long = db.recurring().filter { it.active }.sumOf { it.cents }
 }
