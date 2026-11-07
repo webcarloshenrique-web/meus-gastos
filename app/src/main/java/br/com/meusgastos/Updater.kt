@@ -40,7 +40,7 @@ object Updater {
                     if (a.optString("name").endsWith(".apk")) url = a.optString("browser_download_url")
                 }
             }
-            if (v == null || url == null) null else Info(v, url, j.optString("body").takeIf { it != "null" } ?: "")
+            if (v == null || url == null) null else Info(v, url, j.optString("body").takeIf { it != "null" }?.lineSequence()?.firstOrNull()?.trim() ?: "")
         }
     } catch (_: Exception) {
         null
