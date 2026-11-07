@@ -20,6 +20,21 @@ data class Expense(
     val planId: Long = 0,
     val instNum: Int = 0,
     val instTotal: Int = 0,
+    val pay: String = "",
+    val fixedId: Long = 0,
+)
+
+/** Gasto fixo: repete todo mês no dia [day]. lastYm = último mês já lançado (ano*12+mês). */
+data class Recurring(
+    val id: Long,
+    val cents: Long,
+    val merchant: String,
+    val category: String?,
+    val day: Int,
+    val pay: String,
+    val active: Boolean,
+    val startMs: Long,
+    val lastYm: Int,
 )
 
 /** Uma entrada de dinheiro (salário, Pix recebido, depósito...). */
@@ -42,13 +57,14 @@ data class LogEntry(val id: Long, val pkg: String, val text: String, val dateMs:
  * Banco de dados local (fica só no celular).
  * Regra de segurança: só apaga um gasto quando VOCÊ toca em "Apagar".
  */
-class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", null, 2) {
+class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", null, 3) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             "CREATE TABLE expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, cents INTEGER NOT NULL, " +
                 "merchant TEXT NOT NULL, category TEXT, date_ms INTEGER NOT NULL, source TEXT NOT NULL, " +
-                "plan_id INTEGER NOT NULL DEFAULT 0, inst_num INTEGER NOT NULL DEFAULT 0, inst_total INTEGER NOT NULL DEFAULT 0)"
+                "plan_id INTEGER NOT NULL DEFAULT 0, inst_num INTEGER NOT NULL DEFAULT 0, inst_total INTEGER NOT NULL DEFAULT 0, " +
+                "pay TEXT NOT NULL DEFAULT '', fixed_id INTEGER NOT NULL DEFAULT 0)"
         )
         db.execSQL("CREATE TABLE rules (keyword TEXT PRIMARY KEY, category TEXT NOT NULL)")
         db.execSQL(
@@ -56,6 +72,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
                 "text TEXT NOT NULL, date_ms INTEGER NOT NULL, parsed INTEGER NOT NULL)"
         )
         createV2(db)
+        createV3(db)
     }
 
     /** Atualização da versão 1 para a 2: nada é apagado, só são adicionadas colunas e tabelas. */
@@ -66,6 +83,19 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
             db.execSQL("ALTER TABLE expenses ADD COLUMN inst_total INTEGER NOT NULL DEFAULT 0")
             createV2(db)
         }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE expenses ADD COLUMN pay TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE expenses ADD COLUMN fixed_id INTEGER NOT NULL DEFAULT 0")
+            createV3(db)
+        }
+    }
+
+    private fun createV3(db: SQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS recurring (id INTEGER PRIMARY KEY AUTOINCREMENT, cents INTEGER NOT NULL, " +
+                "merchant TEXT NOT NULL, category TEXT, day INTEGER NOT NULL, pay TEXT NOT NULL DEFAULT '', " +
+                "active INTEGER NOT NULL DEFAULT 1, start_ms INTEGER NOT NULL, last_ym INTEGER NOT NULL DEFAULT 0)"
+        )
     }
 
     private fun createV2(db: SQLiteDatabase) {
@@ -98,6 +128,8 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         cv.put("plan_id", e.planId)
         cv.put("inst_num", e.instNum)
         cv.put("inst_total", e.instTotal)
+        cv.put("pay", e.pay)
+        cv.put("fixed_id", e.fixedId)
         return cv
     }
 
@@ -122,6 +154,8 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
                         planId = it.getLong(6),
                         instNum = it.getInt(7),
                         instTotal = it.getInt(8),
+                        pay = it.getString(9) ?: "",
+                        fixedId = it.getLong(10),
                     )
                 )
             }
@@ -129,7 +163,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         return out
     }
 
-    private val cols = "id, cents, merchant, category, date_ms, source, plan_id, inst_num, inst_total"
+    private val cols = "id, cents, merchant, category, date_ms, source, plan_id, inst_num, inst_total, pay, fixed_id"
 
     fun expenses(fromMs: Long, toMs: Long): List<Expense> = readExpenses(
         readableDatabase.rawQuery(
@@ -211,6 +245,73 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         "SELECT COUNT(*) FROM expenses WHERE cents = ? AND merchant = ? AND date_ms >= ? AND date_ms < ?",
         arrayOf(cents.toString(), merchant, (dateMs - 60_000).toString(), (dateMs + 60_000).toString())
     ) > 0
+
+    // ---------- Gastos fixos ----------
+
+    fun insertRecurring(r: Recurring): Long {
+        val cv = ContentValues()
+        cv.put("cents", r.cents)
+        cv.put("merchant", r.merchant)
+        cv.put("category", r.category)
+        cv.put("day", r.day)
+        cv.put("pay", r.pay)
+        cv.put("active", if (r.active) 1 else 0)
+        cv.put("start_ms", r.startMs)
+        cv.put("last_ym", r.lastYm)
+        return writableDatabase.insert("recurring", null, cv)
+    }
+
+    fun updateRecurring(r: Recurring) {
+        val cv = ContentValues()
+        cv.put("cents", r.cents)
+        cv.put("merchant", r.merchant)
+        cv.put("category", r.category)
+        cv.put("day", r.day)
+        cv.put("pay", r.pay)
+        cv.put("active", if (r.active) 1 else 0)
+        cv.put("last_ym", r.lastYm)
+        writableDatabase.update("recurring", cv, "id = ?", arrayOf(r.id.toString()))
+    }
+
+    fun recurring(): List<Recurring> {
+        val out = ArrayList<Recurring>()
+        readableDatabase.rawQuery(
+            "SELECT id, cents, merchant, category, day, pay, active, start_ms, last_ym FROM recurring ORDER BY day, merchant", null
+        ).use {
+            while (it.moveToNext()) {
+                out.add(
+                    Recurring(
+                        it.getLong(0), it.getLong(1), it.getString(2), if (it.isNull(3)) null else it.getString(3),
+                        it.getInt(4), it.getString(5) ?: "", it.getInt(6) == 1, it.getLong(7), it.getInt(8),
+                    )
+                )
+            }
+        }
+        return out
+    }
+
+    fun deleteRecurring(id: Long) {
+        writableDatabase.delete("recurring", "id = ?", arrayOf(id.toString()))
+        writableDatabase.execSQL("UPDATE expenses SET fixed_id = 0 WHERE fixed_id = ?", arrayOf<Any>(id))
+    }
+
+    fun hasFixedIn(fixedId: Long, fromMs: Long, toMs: Long): Boolean = sum(
+        "SELECT COUNT(*) FROM expenses WHERE fixed_id = ? AND date_ms >= ? AND date_ms < ?",
+        arrayOf(fixedId.toString(), fromMs.toString(), toMs.toString())
+    ) > 0
+
+    fun sumFixed(fromMs: Long, toMs: Long): Long = sum(
+        "SELECT COALESCE(SUM(cents), 0) FROM expenses WHERE fixed_id > 0 AND date_ms >= ? AND date_ms < ?",
+        arrayOf(fromMs.toString(), toMs.toString())
+    )
+
+    /** Gasto fixo lançado sozinho pelo app que ainda não foi confirmado por uma notificação do banco. */
+    fun findAutoFixed(cents: Long, fromMs: Long, toMs: Long): Expense? = readExpenses(
+        readableDatabase.rawQuery(
+            "SELECT $cols FROM expenses WHERE fixed_id > 0 AND source = 'fixo' AND cents = ? AND date_ms >= ? AND date_ms < ? LIMIT 1",
+            arrayOf(cents.toString(), fromMs.toString(), toMs.toString())
+        )
+    ).firstOrNull()
 
     // ---------- Entradas (receitas) ----------
 

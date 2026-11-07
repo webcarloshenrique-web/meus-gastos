@@ -304,9 +304,9 @@ object Planilha {
     /** Os mesmos cabeçalhos servem para exportar e importar. */
     val CABECALHO = listOf(
         "Tipo", "Data", "Hora", "Descrição", "Categoria", "Valor (R$)",
-        "Parcela atual", "Total de parcelas", "Criar próximas parcelas?",
+        "Parcela atual", "Total de parcelas", "Criar próximas parcelas?", "Forma de pagamento", "Fixo?",
     )
-    private val LARGURAS = listOf(10, 12, 8, 30, 18, 14, 13, 17, 24)
+    private val LARGURAS = listOf(10, 12, 8, 30, 18, 14, 13, 17, 24, 19, 8)
 
     private val dF = SimpleDateFormat("dd/MM/yyyy", ptBR)
     private val hF = SimpleDateFormat("HH:mm", ptBR)
@@ -323,6 +323,7 @@ object Planilha {
                 listOf(
                     "Gasto", dF.format(d), hF.format(d), it.merchant, it.category ?: "", Dinheiro(it.cents),
                     if (parc) it.instNum else null, if (parc) it.instTotal else null, if (parc) "Não" else null,
+                    it.pay, if (it.fixedId > 0) "Sim" else "Não",
                 )
             )
         }
@@ -389,9 +390,10 @@ object Planilha {
         }
         val exemplos = listOf(
             CABECALHO,
-            listOf("Gasto", dia(2), "12:30", "Restaurante do Zé", "Alimentação", Dinheiro(3590), null, null, null),
-            listOf("Gasto", dia(1), "", "Supermercado", "Mercado", Dinheiro(18740), null, null, null),
-            listOf("Gasto", dia(0), "", "Geladeira (Casas Bahia)", "Casa e contas", Dinheiro(25000), 4, 10, "Sim"),
+            listOf("Gasto", dia(2), "12:30", "Restaurante do Zé", "Alimentação", Dinheiro(3590), null, null, null, "Débito", "Não"),
+            listOf("Gasto", dia(1), "", "Supermercado", "Mercado", Dinheiro(18740), null, null, null, "Pix", "Não"),
+            listOf("Gasto", dia(0), "", "Geladeira (Casas Bahia)", "Casa e contas", Dinheiro(25000), 4, 10, "Sim", "Crédito", "Não"),
+            listOf("Gasto", dia(6), "", "Aluguel", "Casa e contas", Dinheiro(120000), null, null, null, "Boleto", "Sim"),
             listOf("Entrada", dia(5), "", "Salário da empresa", "Salário", Dinheiro(320000), null, null, null),
             listOf("Entrada", dia(3), "", "Pix da Maria", "Pix recebido", Dinheiro(5000), null, null, null),
         )
@@ -407,6 +409,8 @@ object Planilha {
             listOf("Parcela atual", "Só para compra parcelada: a última parcela que você pagou. Ex.: 4"),
             listOf("Total de parcelas", "Só para compra parcelada: em quantas vezes. Ex.: 10"),
             listOf("Criar próximas parcelas?", "Sim = o app cria sozinho as parcelas que faltam nos próximos meses. Não = lança só esta linha."),
+            listOf("Forma de pagamento", "Opcional: Crédito, Débito, Pix, Dinheiro ou Boleto."),
+            listOf("Fixo?", "Sim = conta que repete todo mês (aluguel, internet…). O app passa a lançar sozinho no mesmo dia, todo mês."),
             listOf("", ""),
             listOf("Dicas", ""),
             listOf("1", "Apague as linhas de exemplo antes de importar (ou mantenha, se quiser testar)."),
@@ -471,6 +475,8 @@ object Planilha {
                 h.startsWith("parcela atual") || h == "parcela" -> "atual"
                 h.startsWith("total de parcelas") || h == "parcelas" || h.startsWith("qtd") -> "total"
                 h.startsWith("criar") || h.startsWith("gerar") -> "criar"
+                h.startsWith("forma") || h.startsWith("pagamento") || h.startsWith("meio") -> "pay"
+                h.startsWith("fixo") || h.startsWith("recorrente") -> "fixo"
                 else -> null
             }
             if (k != null && !m.containsKey(k)) m[k] = i
@@ -610,6 +616,21 @@ object Planilha {
                 }
             }
             if (db.exists(valor, desc, data)) { repetidas++; return@forEachIndexed }
+            val pay = Pagamento.normalizar(cel("pay"))
+
+            // Gasto fixo: liga a um fixo existente (mesmo nome e valor) ou cria um novo
+            if (n(cel("fixo")).startsWith("s")) {
+                val ym = Recorrentes.ym(data)
+                val existente = db.recurring().firstOrNull { n(it.merchant) == n(desc) && it.cents == valor }
+                if (existente == null) {
+                    Recorrentes.criar(db, valor, desc, categoria, data, pay, "importado")
+                } else {
+                    db.insertExpense(Expense(0, valor, desc, categoria, data, "importado", pay = pay, fixedId = existente.id))
+                    if (ym > existente.lastYm) db.updateRecurring(existente.copy(lastYm = ym))
+                }
+                gastos++
+                return@forEachIndexed
+            }
 
             // Parcelas: aceita "4" e "10" em colunas separadas, ou "4/10" numa coluna só
             var atual = cel("atual").substringBefore('.').toIntOrNull() ?: 0
@@ -621,14 +642,14 @@ object Planilha {
             if (total in 2..48) {
                 atual = atual.coerceIn(1, total)
                 if (criar) {
-                    Installments.register(db, desc, categoria, data, "importado", valor, total, from = atual)
+                    Installments.register(db, desc, categoria, data, "importado", valor, total, from = atual, pay = pay)
                 } else {
                     val chave = "$desc|$total|$valor"
                     val plano = planos.getOrPut(chave) { db.nextPlanId() }
-                    db.insertExpense(Expense(0, valor, desc, categoria, data, "importado", plano, atual, total))
+                    db.insertExpense(Expense(0, valor, desc, categoria, data, "importado", plano, atual, total, pay = pay))
                 }
             } else {
-                db.insertExpense(Expense(0, valor, desc, categoria, data, "importado"))
+                db.insertExpense(Expense(0, valor, desc, categoria, data, "importado", pay = pay))
             }
             gastos++
         }

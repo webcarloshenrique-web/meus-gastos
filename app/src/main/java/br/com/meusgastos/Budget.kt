@@ -26,7 +26,14 @@ object Budget {
         val renda = if (entrou > 0) entrou else media
         val hoje = Dates.today()
         val dim = Dates.daysIn(month)
-        val projecao = if (month == 0 && hoje >= 3 && saiu > 0) saiu * dim / hoje else null
+        // Previsão: só os gastos do dia a dia seguem o ritmo; fixos e parcelas entram pelo valor cheio.
+        val fixosLancados = db.sumFixed(r.first, r.second)
+        val parcelas = db.sumInstallments(r.first, r.second)
+        val fixosMes = Recorrentes.totalMensal(db)
+        val variavel = (saiu - fixosLancados - parcelas).coerceAtLeast(0)
+        val projecao = if (month == 0 && hoje >= 3 && saiu > 0) {
+            variavel * dim / hoje + maxOf(fixosMes, fixosLancados) + parcelas
+        } else null
         val porDia = if (month == 0 && renda > 0) (renda - saiu) / (dim - hoje + 1).coerceAtLeast(1) else null
         return Saldo(entrou, saiu, renda, entrou == 0L && media > 0, projecao, porDia)
     }

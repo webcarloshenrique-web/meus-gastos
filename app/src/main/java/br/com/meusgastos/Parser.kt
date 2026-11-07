@@ -13,6 +13,7 @@ data class Parsed(
     val parcelas: Int = 1,
     val parcelaAtual: Int = 0,
     val firstExtra: Long = 0,
+    val pay: String = "",
 )
 
 /** Resultado da leitura de uma entrada de dinheiro (Pix recebido, depósito, salário). */
@@ -110,7 +111,15 @@ object Parser {
             ?: leadingRx.find(after)?.groupValues?.get(1)
         val cleaned = raw?.replace(cutRx, "")?.trim()
         val merchant: String = cleaned?.takeIf { it.length >= 2 } ?: title.ifBlank { "Gasto" }
-        return Parsed(valor, pretty(merchant), parcelas, atual, extra)
+        val pay = when {
+            parcelas > 1 || low.contains("crédito") || low.contains("credito") -> "Crédito"
+            low.contains("débito") || low.contains("debito") -> "Débito"
+            low.contains("pix") -> "Pix"
+            low.contains("boleto") -> "Boleto"
+            low.contains("saque") -> "Dinheiro"
+            else -> ""
+        }
+        return Parsed(valor, pretty(merchant), parcelas, atual, extra, pay)
     }
 
     // ------------------------------------------------------------ Entradas

@@ -72,6 +72,7 @@ enum class Screen(val title: String, val emoji: String) {
     HOME("Meus Gastos", "🏠"),
     ADD("Adicionar gasto", "➕"),
     INCOME("Entradas", "💰"),
+    FIXED("Gastos fixos", "🔁"),
     PENDING("Pendentes", "❓"),
     CALENDAR("Calendário", "📅"),
     REPORTS("Relatórios", "📊"),
@@ -89,6 +90,7 @@ class MainActivity : ComponentActivity() {
         val db = Db.get(this)
         Cats.load(db)
         Tema.load(this)
+        Recorrentes.gerar(this, db)
         // Na primeira vez, já marca os apps que parecem ser de banco.
         if (!Prefs.hasChosen(this)) {
             Prefs.setAll(this, Banks.apps(this).filter { it.bank }.map { it.pkg }.toSet())
@@ -132,6 +134,7 @@ fun App(start: Screen) {
     val db = remember { Db.get(ctx) }
     var screen by rememberSaveable { mutableStateOf(start) }
     var month by rememberSaveable { mutableIntStateOf(0) }
+    var addFixo by remember { mutableStateOf(false) }
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val tick = Bus.tick.intValue
@@ -139,6 +142,7 @@ fun App(start: Screen) {
     val totalMes = remember(tick) { val r = Dates.range(0); db.sumBetween(r.first, r.second) }
 
     fun go(s: Screen) {
+        addFixo = false
         screen = s
         scope.launch { drawer.close() }
     }
@@ -166,7 +170,7 @@ fun App(start: Screen) {
                         )
                     }
                     Spacer(Modifier.height(10.dp))
-                    listOf(Screen.HOME, Screen.ADD, Screen.INCOME, Screen.PENDING, Screen.CALENDAR, Screen.REPORTS, Screen.BACKUP, Screen.IMPORT)
+                    listOf(Screen.HOME, Screen.ADD, Screen.INCOME, Screen.FIXED, Screen.PENDING, Screen.CALENDAR, Screen.REPORTS, Screen.BACKUP, Screen.IMPORT)
                         .forEach { s -> DrawerItem(s, screen == s, if (s == Screen.PENDING) pendentes else 0) { go(s) } }
                     HorizontalDivider(Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
                     listOf(Screen.LIMITS, Screen.CATEGORIES, Screen.SETTINGS)
@@ -199,7 +203,8 @@ fun App(start: Screen) {
         ) { pad ->
             when (screen) {
                 Screen.HOME -> HomeScreen(db, pad, month, setMonth) { go(it) }
-                Screen.ADD -> AddScreen(db, pad) { screen = Screen.HOME }
+                Screen.ADD -> AddScreen(db, pad, addFixo) { addFixo = false; screen = Screen.HOME }
+                Screen.FIXED -> FixedScreen(db, pad) { addFixo = true; screen = Screen.ADD }
                 Screen.INCOME -> IncomeScreen(db, pad, month, setMonth)
                 Screen.PENDING -> PendingScreen(db, pad)
                 Screen.CALENDAR -> CalendarScreen(db, pad, month, setMonth)

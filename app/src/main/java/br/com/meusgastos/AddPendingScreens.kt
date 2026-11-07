@@ -74,13 +74,15 @@ fun DateChooser(data: Long, onChange: (Long) -> Unit) {
 // ------------------------------------------------------------ Adicionar gasto
 
 @Composable
-fun AddScreen(db: Db, pad: PaddingValues, onSaved: () -> Unit) {
+fun AddScreen(db: Db, pad: PaddingValues, inicialFixo: Boolean = false, onSaved: () -> Unit) {
     val ctx = LocalContext.current
     var valor by remember { mutableLongStateOf(0L) }
     var desc by remember { mutableStateOf("") }
     var cat by remember { mutableStateOf<String?>(null) }
     var data by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var erro by remember { mutableStateOf("") }
+    var fixo by remember { mutableStateOf(inicialFixo) }
+    var pay by remember { mutableStateOf("") }
 
     // Parcelamento
     var parcelado by remember { mutableStateOf(false) }
@@ -112,8 +114,23 @@ fun AddScreen(db: Db, pad: PaddingValues, onSaved: () -> Unit) {
             )
         }
 
-        // Parcelado
+        // Tipo de gasto
         AppCard {
+            SectionTitle("🔖 Que tipo de gasto?")
+            Segmented(listOf("🛒 Compra", "🔁 Fixo (todo mês)"), if (fixo) 1 else 0, { fixo = it == 1; if (fixo) parcelado = false })
+            Hint(
+                if (fixo) "Contas que se repetem todo mês: aluguel, internet, academia, escola… O app lança sozinho no mesmo dia, todo mês."
+                else "Compras do dia a dia: mercado, lanche, loja…"
+            )
+        }
+
+        AppCard {
+            SectionTitle("💳 Como pagou?")
+            PayChips(pay) { pay = it }
+        }
+
+        // Parcelado
+        if (!fixo) AppCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     SectionTitle("💳 Compra parcelada?")
@@ -153,8 +170,18 @@ fun AddScreen(db: Db, pad: PaddingValues, onSaved: () -> Unit) {
         }
 
         AppCard {
-            SectionTitle(if (parcelado) "📅 Quando pagou essa parcela?" else "📅 Quando?")
+            SectionTitle(
+                when {
+                    fixo -> "📅 Quando vence (ou venceu) este mês?"
+                    parcelado -> "📅 Quando pagou essa parcela?"
+                    else -> "📅 Quando?"
+                }
+            )
             DateChooser(data) { data = it }
+            if (fixo) {
+                val dia = java.util.Calendar.getInstance().apply { timeInMillis = data }.get(java.util.Calendar.DAY_OF_MONTH)
+                Hint("🔁 Vai repetir todo dia $dia. Para parar ou mudar o valor: Menu → Gastos fixos.")
+            }
         }
 
         AppCard {
@@ -171,18 +198,18 @@ fun AddScreen(db: Db, pad: PaddingValues, onSaved: () -> Unit) {
                     erro = "Digite o valor do gasto"
                 } else {
                     val nome = desc.trim().ifBlank { cat ?: "Gasto" }
-                    if (parcelado) {
-                        Installments.register(
+                    when {
+                        fixo -> Recorrentes.criar(db, valor, nome, cat, data, pay)
+                        parcelado -> Installments.register(
                             db, nome, cat, data, "manual", valorParcela, totalParcelas,
-                            from = parcelaAtual, withPrevious = lancarAnteriores, firstExtra = sobraDivisao,
+                            from = parcelaAtual, withPrevious = lancarAnteriores, firstExtra = sobraDivisao, pay = pay,
                         )
-                    } else {
-                        db.insertExpense(Expense(0, valor, nome, cat, data, "manual"))
+                        else -> db.insertExpense(Expense(0, valor, nome, cat, data, "manual", pay = pay))
                     }
                     Limits.check(ctx, db, cat)
                     Bus.bump()
                     Toast.makeText(ctx, "Gasto salvo! ✅", Toast.LENGTH_SHORT).show()
-                    valor = 0; desc = ""; cat = null; parcelado = false; parcelaAtual = 1
+                    valor = 0; desc = ""; cat = null; parcelado = false; parcelaAtual = 1; pay = ""; fixo = false
                     onSaved()
                 }
             },

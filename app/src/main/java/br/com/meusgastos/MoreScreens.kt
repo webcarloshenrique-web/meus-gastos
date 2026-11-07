@@ -362,6 +362,8 @@ fun ImportScreen(db: Db, pad: PaddingValues) {
         Triple("Parcela atual", "Só se for parcelado: a última paga", "4"),
         Triple("Total de parcelas", "Só se for parcelado", "10"),
         Triple("Criar próximas parcelas?", "Sim = cria as que faltam nos próximos meses", "Sim"),
+        Triple("Forma de pagamento", "Crédito, Débito, Pix, Dinheiro ou Boleto", "Pix"),
+        Triple("Fixo?", "Sim = conta que repete todo mês", "Não"),
     )
 
     Column(
@@ -612,6 +614,132 @@ fun CategoryDialog(db: Db, original: CatInfo?, onDismiss: () -> Unit) {
                             Bus.bump()
                             onDismiss()
                         }
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Verde),
+            ) { Text("Salvar") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
+}
+
+// ============================================================ Gastos fixos
+
+@Composable
+fun FixedScreen(db: Db, pad: PaddingValues, onNovo: () -> Unit) {
+    val tick = Bus.tick.intValue
+    val lista = remember(tick) { db.recurring() }
+    val total = lista.filter { it.active }.sumOf { it.cents }
+    val saldo = remember(tick) { Budget.saldo(db, 0) }
+    var editando by remember { mutableStateOf<Recurring?>(null) }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(pad),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            AppCard {
+                SectionTitle("🔁 Gastos fixos")
+                Hint("Contas que se repetem todo mês. O app lança sozinho no dia do vencimento. Se o banco avisar o pagamento com o mesmo valor, ele junta os dois (não conta duas vezes).")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatBox("Por mês", compact(total), Modifier.weight(1f), Vermelho)
+                    StatBox("Contas ativas", "${lista.count { it.active }}", Modifier.weight(1f))
+                    if (saldo.renda > 0) StatBox("Da sua entrada", "${total * 100 / saldo.renda}%", Modifier.weight(1f))
+                }
+                Button(
+                    onClick = onNovo, modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Verde),
+                ) { Text("➕ Novo gasto fixo") }
+            }
+        }
+        if (lista.isEmpty()) {
+            item { Hint("Nenhum gasto fixo ainda. Ex.: aluguel, internet, plano de celular, academia.") }
+        }
+        items(lista, key = { it.id }) { r ->
+            val cat = Cats.of(r.category)
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White)
+                    .clickable { editando = r }.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CatIcon(cat, 44.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(r.merchant, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (r.active) TextoForte else TextoSuave, maxLines = 1)
+                    val pg = if (r.pay.isNotBlank()) " · ${Pagamento.emoji(r.pay)} ${r.pay}" else ""
+                    Hint((if (r.active) "Todo dia ${r.day}" else "⏸ Parado") + " · ${cat.name}$pg")
+                }
+                Text(money(r.cents), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = if (r.active) TextoForte else TextoSuave)
+            }
+        }
+    }
+
+    editando?.let { r -> FixedDialog(db, r) { editando = null } }
+}
+
+@Composable
+fun FixedDialog(db: Db, r: Recurring, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    var nome by remember { mutableStateOf(r.merchant) }
+    var valor by remember { mutableLongStateOf(r.cents) }
+    var dia by remember { mutableIntStateOf(r.day) }
+    var cat by remember { mutableStateOf(r.category) }
+    var pay by remember { mutableStateOf(r.pay) }
+    var ativo by remember { mutableStateOf(r.active) }
+    var confirmarApagar by remember { mutableStateOf(false) }
+
+    if (confirmarApagar) {
+        AlertDialog(
+            onDismissRequest = { confirmarApagar = false },
+            title = { Text("Apagar \"${r.merchant}\"?") },
+            text = { Text("O app para de lançar todo mês. Os gastos que já foram lançados continuam no histórico.") },
+            confirmButton = {
+                TextButton(onClick = { db.deleteRecurring(r.id); Bus.bump(); onDismiss() }) {
+                    Text("Apagar", color = Vermelho, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmarApagar = false }) { Text("Cancelar") } },
+        )
+        return
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Gasto fixo") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = nome, onValueChange = { nome = it }, label = { Text("Nome") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+                MoneyField(valor, { valor = it }, label = "Valor por mês")
+                Hint("O novo valor vale para os próximos meses.")
+                Text("Dia do vencimento", fontWeight = FontWeight.Medium)
+                Stepper(dia, 1..31) { dia = it }
+                Text("Como paga?", fontWeight = FontWeight.Medium)
+                PayChips(pay) { pay = it }
+                Text("Categoria", fontWeight = FontWeight.Medium)
+                CategoryGrid(cat) { cat = it }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (ativo) "▶ Repetindo todo mês" else "⏸ Parado", Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                    androidx.compose.material3.Switch(checked = ativo, onCheckedChange = { ativo = it })
+                }
+                TextButton(onClick = { confirmarApagar = true }) { Text("🗑 Apagar gasto fixo", color = Vermelho) }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (valor <= 0 || nome.isBlank()) {
+                        Toast.makeText(ctx, "Preencha nome e valor", Toast.LENGTH_SHORT).show()
+                    } else {
+                        // Ao reativar, não lança os meses em que ficou parado.
+                        val ultimo = if (ativo && !r.active) Recorrentes.ym(System.currentTimeMillis()) - 1 else r.lastYm
+                        db.updateRecurring(r.copy(merchant = nome.trim(), cents = valor, day = dia, category = cat, pay = pay, active = ativo, lastYm = ultimo))
+                        Recorrentes.gerar(ctx, db)
+                        Bus.bump()
+                        onDismiss()
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = Verde),

@@ -132,10 +132,10 @@ object Installments {
     fun register(
         db: Db, merchant: String, category: String?, dateMs: Long, source: String,
         instCents: Long, total: Int, from: Int = 1, onlyOne: Boolean = false,
-        withPrevious: Boolean = false, firstExtra: Long = 0,
+        withPrevious: Boolean = false, firstExtra: Long = 0, pay: String = "",
     ): List<Long> {
         if (total <= 1) {
-            return listOf(db.insertExpense(Expense(0, instCents + firstExtra, merchant, category, dateMs, source)))
+            return listOf(db.insertExpense(Expense(0, instCents + firstExtra, merchant, category, dateMs, source, pay = pay)))
         }
         val planId = db.nextPlanId()
         val start = if (onlyOne) from else if (withPrevious) 1 else from
@@ -144,10 +144,113 @@ object Installments {
         for (k in start..end) {
             val c = Calendar.getInstance().apply { timeInMillis = dateMs; add(Calendar.MONTH, k - from) }
             val valor = if (k == 1) instCents + firstExtra else instCents
-            ids.add(db.insertExpense(Expense(0, valor, merchant, category, c.timeInMillis, source, planId, k, total)))
+            ids.add(db.insertExpense(Expense(0, valor, merchant, category, c.timeInMillis, source, planId, k, total, pay = pay)))
         }
         return ids
     }
+}
+
+/** Formas de pagamento. */
+object Pagamento {
+    val opcoes = listOf("Crédito" to "💳", "Débito" to "🏧", "Pix" to "⚡", "Dinheiro" to "💵", "Boleto" to "🧾")
+    fun emoji(p: String): String = opcoes.firstOrNull { it.first == p }?.second ?: ""
+
+    /** Aceita "credito", "cartão de crédito", "pix"... */
+    fun normalizar(s: String): String {
+        val x = Categorizer.norm(s)
+        return when {
+            x.isBlank() -> ""
+            x.contains("cred") -> "Crédito"
+            x.contains("deb") -> "Débito"
+            x.contains("pix") -> "Pix"
+            x.contains("dinheiro") || x.contains("especie") -> "Dinheiro"
+            x.contains("boleto") -> "Boleto"
+            else -> ""
+        }
+    }
+}
+
+/**
+ * Gastos fixos: lança sozinho, todo mês, no dia do vencimento.
+ * Se você apagar o lançamento de um mês, ele não volta (o app lembra o último mês lançado).
+ */
+object Recorrentes {
+    fun ym(ms: Long): Int {
+        val c = Calendar.getInstance().apply { timeInMillis = ms }
+        return c.get(Calendar.YEAR) * 12 + c.get(Calendar.MONTH)
+    }
+
+    /** Data de vencimento no mês [ymv] (ajusta dia 31 em meses menores). */
+    fun dataNoMes(ymv: Int, dia: Int): Long {
+        val c = Calendar.getInstance()
+        c.set(ymv / 12, ymv % 12, 1, 9, 0, 0)
+        c.set(Calendar.MILLISECOND, 0)
+        c.set(Calendar.DAY_OF_MONTH, dia.coerceIn(1, c.getActualMaximum(Calendar.DAY_OF_MONTH)))
+        return c.timeInMillis
+    }
+
+    private fun rangeYm(ymv: Int): Pair<Long, Long> {
+        val c = Calendar.getInstance()
+        c.set(ymv / 12, ymv % 12, 1, 0, 0, 0)
+        c.set(Calendar.MILLISECOND, 0)
+        val a = c.timeInMillis
+        c.add(Calendar.MONTH, 1)
+        return a to c.timeInMillis
+    }
+
+    /** Cria um gasto fixo e já lança o gasto da data informada. */
+    fun criar(db: Db, cents: Long, merchant: String, category: String?, dateMs: Long, pay: String, source: String = "manual"): Long {
+        val dia = Calendar.getInstance().apply { timeInMillis = dateMs }.get(Calendar.DAY_OF_MONTH)
+        val id = db.insertRecurring(Recurring(0, cents, merchant, category, dia, pay, true, dateMs, ym(dateMs)))
+        db.insertExpense(Expense(0, cents, merchant, category, dateMs, source, pay = pay, fixedId = id))
+        return id
+    }
+
+    /** Lança os gastos fixos que já venceram e ainda não foram lançados. Retorna quantos lançou. */
+    fun gerar(ctx: Context, db: Db): Int {
+        val agora = System.currentTimeMillis()
+        val atual = ym(agora)
+        var n = 0
+        for (r in db.recurring()) {
+            if (!r.active) continue
+            var ultimo = r.lastYm
+            for (m in maxOf(ym(r.startMs), r.lastYm + 1)..atual) {
+                val data = dataNoMes(m, r.day)
+                if (data > agora) break
+                val (a, b) = rangeYm(m)
+                if (!db.hasFixedIn(r.id, a, b)) {
+                    db.insertExpense(Expense(0, r.cents, r.merchant, r.category, data, "fixo", pay = r.pay, fixedId = r.id))
+                    n++
+                }
+                ultimo = m
+            }
+            if (ultimo != r.lastYm) db.updateRecurring(r.copy(lastYm = ultimo))
+        }
+        if (n > 0) {
+            Limits.checkAll(ctx, db)
+            Bus.bump()
+        }
+        return n
+    }
+
+    /**
+     * Um pagamento chegou pelo banco. Se for o valor de um gasto fixo deste mês, liga os dois
+     * (não conta duas vezes). Retorna true se tratou.
+     */
+    fun casarPagamento(db: Db, cents: Long, time: Long, pkg: String, pay: String): Boolean {
+        val (a, b) = rangeYm(ym(time))
+        db.findAutoFixed(cents, a, b)?.let { e ->
+            db.update(e.copy(source = pkg, pay = if (e.pay.isBlank()) pay else e.pay))
+            return true
+        }
+        val r = db.recurring().firstOrNull { it.active && it.cents == cents && it.lastYm < ym(time) } ?: return false
+        db.insertExpense(Expense(0, cents, r.merchant, r.category, time, pkg, pay = if (r.pay.isBlank()) pay else r.pay, fixedId = r.id))
+        db.updateRecurring(r.copy(lastYm = ym(time)))
+        return true
+    }
+
+    /** Quanto os fixos ativos somam por mês. */
+    fun totalMensal(db: Db): Long = db.recurring().filter { it.active }.sumOf { it.cents }
 }
 
 /** Limite por categoria: avisa ao chegar na % escolhida e ao passar de 100%. */
@@ -172,6 +275,11 @@ object Limits {
     }
 }
 
+/** (ver Limits.check) */
+fun Limits.checkAll(ctx: Context, db: Db) {
+    db.limits().keys.forEach { check(ctx, db, it) }
+}
+
 /** Lógica central: recebe um texto de notificação e transforma em gasto ou entrada. */
 object Processor {
     fun process(ctx: Context, pkg: String, title: String, text: String, time: Long = System.currentTimeMillis()) {
@@ -190,6 +298,10 @@ object Processor {
 
         val parsed = Parser.parse(title, text)
         db.insertLog(pkg, full, time, parsed != null)
+        if (parsed != null && parsed.parcelas <= 1 && Recorrentes.casarPagamento(db, parsed.cents, time, pkg, parsed.pay)) {
+            Bus.bump()
+            return
+        }
         if (parsed != null && !db.hasRecent(parsed.cents, pkg, time - 120_000)) {
             val cat = Categorizer.categorize(db, parsed.merchant)
             val ids = Installments.register(
@@ -197,6 +309,7 @@ object Processor {
                 from = if (parsed.parcelaAtual > 0) parsed.parcelaAtual else 1,
                 onlyOne = parsed.parcelaAtual > 0,
                 firstExtra = parsed.firstExtra,
+                pay = parsed.pay,
             )
             if (cat == null) Notifier.askCategory(ctx, ids.first(), parsed) else Limits.check(ctx, db, cat)
         }

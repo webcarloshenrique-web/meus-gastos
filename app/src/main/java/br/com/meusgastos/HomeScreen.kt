@@ -54,6 +54,8 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
         (1..3).map { k -> val r = Dates.range(month + k); (month + k) to db.sumInstallments(r.first, r.second) }
             .filter { it.second > 0 }
     }
+    val fixos = remember(tick) { db.recurring().filter { it.active } }
+    val fixosLancados = remember(tick, month) { db.sumFixed(range.first, range.second) }
     val total = lista.sumOf { it.cents }
     val porCatMap = lista.groupBy { it.category }.mapValues { (_, l) -> l.sumOf { it.cents } }
     val porCat = porCatMap.map { (c, v) -> Cats.of(c) to v }.sortedByDescending { it.second }
@@ -188,6 +190,26 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
                                 LimitBar(g, lim, alertPct)
                             }
                         }
+                }
+            }
+        }
+
+        // Gastos fixos
+        if (fixos.isNotEmpty() && month <= 0) {
+            item {
+                AppCard(Modifier.padding(horizontal = 16.dp).clickable { go(Screen.FIXED) }) {
+                    SectionTitle("🔁 Gastos fixos")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StatBox("Por mês", compact(fixos.sumOf { it.cents }), Modifier.weight(1f))
+                        StatBox("Já lançados", compact(fixosLancados), Modifier.weight(1f))
+                        StatBox("Contas", "${fixos.size}", Modifier.weight(1f))
+                    }
+                    if (month == 0) {
+                        val proximos = fixos.filter { it.day > Dates.today() }.take(3)
+                        if (proximos.isNotEmpty()) {
+                            Hint("Próximos: " + proximos.joinToString(" · ") { "${it.merchant} dia ${it.day} (${compact(it.cents)})" })
+                        }
+                    }
                 }
             }
         }

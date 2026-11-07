@@ -188,7 +188,8 @@ fun SettingsScreen(db: Db, pad: PaddingValues, go: (Screen) -> Unit) {
                                 p.parcelas > 1 -> " · ${p.parcelas}x de ${money(p.cents)} (total ${money(p.cents * p.parcelas + p.firstExtra)})"
                                 else -> ""
                             }
-                            "✔ Gasto: ${money(p.cents + p.firstExtra)} · ${p.merchant}$parc · ${ci.emoji} " +
+                            val pg = if (p.pay.isNotBlank()) " · ${Pagamento.emoji(p.pay)} ${p.pay}" else ""
+                            "✔ Gasto: ${money(p.cents + p.firstExtra)} · ${p.merchant}$parc$pg · ${ci.emoji} " +
                                 if (c == null) "iria para Pendentes" else ci.name
                         }
                     }

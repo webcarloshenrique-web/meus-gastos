@@ -134,6 +134,7 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
             }
 
             2 -> item {
+              Column {
                 AppCard(Modifier.padding(horizontal = 16.dp)) {
                     SectionTitle("Para onde foi o dinheiro")
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -146,6 +147,29 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
                     if (porCat.isEmpty()) Hint("Ainda não há gastos neste mês.")
                     porCat.forEach { (cat, v) -> CategoryBarRow(cat, v, total) }
                 }
+                if (lista.isNotEmpty()) {
+                    Spacer(Modifier.height(14.dp))
+                    AppCard(Modifier.padding(horizontal = 16.dp)) {
+                        SectionTitle("🔁 Fixos × 🛒 compras")
+                        val fixo = lista.filter { it.fixedId > 0 }.sumOf { it.cents }
+                        val parc = lista.filter { it.instTotal > 1 }.sumOf { it.cents }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            StatBox("Fixos", compact(fixo), Modifier.weight(1f))
+                            StatBox("Parcelas", compact(parc), Modifier.weight(1f))
+                            StatBox("Compras", compact(total - fixo - parc), Modifier.weight(1f))
+                        }
+                        SectionTitle("💳 Como você pagou")
+                        lista.groupBy { it.pay }
+                            .map { (p, l) -> p to l.sumOf { it.cents } }
+                            .sortedByDescending { it.second }
+                            .forEach { (p, v) ->
+                                val nome = if (p.isBlank()) "Não informado" else p
+                                val emoji = if (p.isBlank()) "❔" else Pagamento.emoji(p)
+                                CategoryBarRow(CatInfo(nome, emoji, if (p.isBlank()) Linha else Verde), v, total)
+                            }
+                    }
+                }
+              }
             }
 
             else -> item {
@@ -265,6 +289,14 @@ fun insights(lista: List<Expense>, prev: List<Expense>, month: Int, saldo: Saldo
         out.add("🔁" to "Onde você mais comprou: ${l.first().merchant} (${l.size} vezes, ${money(l.sumOf { it.cents })}).")
     }
 
+    val fixos = lista.filter { it.fixedId > 0 }.sumOf { it.cents }
+    if (fixos > 0) {
+        out.add("🔁" to "Gastos fixos (contas do mês) somam ${money(fixos)}: ${(fixos * 100.0 / total).roundToInt()}% do que você gastou.")
+    }
+    val credito = lista.filter { it.pay == "Crédito" }.sumOf { it.cents }
+    if (credito > 0) {
+        out.add("💳" to "No cartão de crédito foram ${money(credito)} (${(credito * 100.0 / total).roundToInt()}%). Lembre que isso vem na fatura.")
+    }
     val parcelas = lista.filter { it.instTotal > 1 }.sumOf { it.cents }
     if (parcelas > 0) {
         out.add("💳" to "Parcelas de compras antigas ocupam ${money(parcelas)} deste mês (${(parcelas * 100.0 / total).roundToInt()}%).")

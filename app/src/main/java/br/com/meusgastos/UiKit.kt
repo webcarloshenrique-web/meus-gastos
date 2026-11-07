@@ -455,8 +455,10 @@ fun ExpenseItem(e: Expense, onClick: () -> Unit) {
                 e.merchant, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
-            val parc = if (e.instTotal > 1) " · 💳 ${e.instNum}/${e.instTotal}" else ""
-            Text("${cat.name} · ${dateFmt.format(Date(e.dateMs))}$parc", fontSize = 13.sp, color = TextoSuave, maxLines = 1)
+            val parc = if (e.instTotal > 1) " · ${e.instNum}/${e.instTotal}x" else ""
+            val fixo = if (e.fixedId > 0) " · 🔁 fixo" else ""
+            val pg = if (e.pay.isNotBlank()) " · ${Pagamento.emoji(e.pay)} ${e.pay}" else ""
+            Text("${cat.name} · ${dayFmt.format(Date(e.dateMs))}$parc$fixo$pg", fontSize = 13.sp, color = TextoSuave, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Text(money(e.cents), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextoForte)
     }
@@ -491,6 +493,21 @@ fun CategoryGrid(selected: String?, onPick: (String) -> Unit) {
     }
 }
 
+/** Escolha da forma de pagamento (toque de novo para desmarcar). */
+@Composable
+fun PayChips(selected: String, onPick: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Pagamento.opcoes.chunked(3).forEach { linha ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                linha.forEach { (nome, emoji) ->
+                    Chip("$emoji $nome", selected == nome, Modifier.weight(1f)) { onPick(if (selected == nome) "" else nome) }
+                }
+                repeat(3 - linha.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
 /** Janela para corrigir um gasto: nome, valor e categoria — ou apagar (uma parcela ou a compra toda). */
 @Composable
 fun EditExpenseDialog(db: Db, e: Expense, onDismiss: () -> Unit) {
@@ -498,6 +515,7 @@ fun EditExpenseDialog(db: Db, e: Expense, onDismiss: () -> Unit) {
     var nome by remember(e.id) { mutableStateOf(e.merchant) }
     var valor by remember(e.id) { mutableLongStateOf(e.cents) }
     var cat by remember(e.id) { mutableStateOf(e.category) }
+    var pay by remember(e.id) { mutableStateOf(e.pay) }
     var confirmarApagar by remember(e.id) { mutableStateOf(false) }
     var erro by remember(e.id) { mutableStateOf("") }
     val parcelado = e.planId > 0 && e.instTotal > 1
@@ -548,6 +566,19 @@ fun EditExpenseDialog(db: Db, e: Expense, onDismiss: () -> Unit) {
                 Text("Categoria", fontWeight = FontWeight.Medium)
                 if (parcelado) Hint("A categoria vale para todas as parcelas desta compra.")
                 CategoryGrid(cat) { cat = it }
+                Text("Como pagou?", fontWeight = FontWeight.Medium)
+                PayChips(pay) { pay = it }
+                if (e.fixedId > 0) {
+                    val r = remember(e.fixedId) { db.recurring().firstOrNull { it.id == e.fixedId } }
+                    if (r != null) {
+                        Hint(if (r.active) "🔁 Gasto fixo: repete todo dia ${r.day}. Para mudar o valor dos próximos meses, use Menu → Gastos fixos." else "🔁 Gasto fixo (parado).")
+                        if (r.active) {
+                            TextButton(onClick = {
+                                db.updateRecurring(r.copy(active = false)); Bus.bump(); onDismiss()
+                            }) { Text("⏹ Parar de repetir todo mês", color = Vermelho) }
+                        }
+                    }
+                }
                 if (erro.isNotEmpty()) Text(erro, color = Vermelho)
             }
         },
@@ -557,7 +588,7 @@ fun EditExpenseDialog(db: Db, e: Expense, onDismiss: () -> Unit) {
                     if (valor <= 0) {
                         erro = "Digite o valor"
                     } else {
-                        val upd = e.copy(cents = valor, merchant = nome.trim().ifBlank { e.merchant }, category = cat)
+                        val upd = e.copy(cents = valor, merchant = nome.trim().ifBlank { e.merchant }, category = cat, pay = pay)
                         db.update(upd)
                         val nova = cat
                         if (nova != null && nova != e.category) Categorizer.learn(db, upd, nova)
