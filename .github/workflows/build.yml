@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -20,11 +23,32 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - name: Preparar a chave de assinatura
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Falta o segredo KEYSTORE_BASE64 (veja o LEIA-ME, passo da chave)."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > app/release.keystore
+
       - name: Compilar o app
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Renomear o APK
+        run: cp app/build/outputs/apk/release/app-release.apk meus-gastos.apk
 
       - name: Disponibilizar o APK para download
         uses: actions/upload-artifact@v4
         with:
           name: meus-gastos-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: meus-gastos.apk
+
+      - name: Publicar a versão (o app se atualiza a partir daqui)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Versão ${{ github.run_number }}
+          body: ${{ github.event.head_commit.message }}
+          files: meus-gastos.apk
