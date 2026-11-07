@@ -449,7 +449,14 @@ object Planilha {
 
     // ------------------------------------------------------------ Importar
 
-    data class Resultado(val gastos: Int, val entradas: Int, val repetidas: Int, val erros: List<String>, val reconhecido: Boolean)
+    data class Resultado(
+        val gastos: Int,
+        val entradas: Int,
+        val repetidas: Int,
+        val erros: List<String>,
+        val reconhecido: Boolean,
+        val removidos: Int = 0,
+    )
 
     private fun n(s: String) = Categorizer.norm(s).trim()
 
@@ -547,7 +554,27 @@ object Planilha {
         }
     }
 
-    fun importar(ctx: Context, db: Db, uri: Uri): Resultado {
+    /** Confere se a planilha tem cabeçalho e pelo menos uma linha válida (antes de apagar qualquer coisa). */
+    private fun temLinhaValida(rows: List<List<String>>): Boolean {
+        var mapa: Map<String, Int>? = null
+        for (row in rows) {
+            val cells = row.map { it.trim() }
+            if (cells.all { it.isEmpty() }) continue
+            if (ehCabecalho(cells)) { mapa = mapear(cells); continue }
+            val m = mapa ?: continue
+            val d = m["data"]?.let { cells.getOrNull(it) } ?: ""
+            val h = m["hora"]?.let { cells.getOrNull(it) } ?: ""
+            val v = m["valor"]?.let { cells.getOrNull(it) } ?: ""
+            if (lerData(d, h) != null && lerValor(v) != null) return true
+        }
+        return false
+    }
+
+    /**
+     * @param fonte     marca dos registros criados ("importado" ou "backup")
+     * @param substituir true = apaga antes tudo o que veio de importações anteriores com a mesma marca
+     */
+    fun importar(ctx: Context, db: Db, uri: Uri, fonte: String = "importado", substituir: Boolean = false): Resultado {
         val bytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: return Resultado(0, 0, 0, listOf("Não consegui abrir o arquivo."), false)
         val rows = try {
@@ -555,6 +582,8 @@ object Planilha {
         } catch (_: Exception) {
             return Resultado(0, 0, 0, listOf("O arquivo não é uma planilha válida (use .xlsx ou .csv)."), false)
         }
+
+        val removidos = if (substituir && temLinhaValida(rows)) db.deleteBySource(fonte) else 0
 
         var mapa: Map<String, Int>? = null
         var tipoPadrao = "gasto"
@@ -597,7 +626,7 @@ object Planilha {
                 val kind = tipoEntrada(cel("cat").ifBlank { cel("tipo") })
                 val desc = cel("desc").ifBlank { kind }
                 if (db.existsIncome(valor, desc, data)) { repetidas++; return@forEachIndexed }
-                db.insertIncome(Income(0, valor, desc, kind, data, "importado"))
+                db.insertIncome(Income(0, valor, desc, kind, data, fonte))
                 entradas++
                 return@forEachIndexed
             }
@@ -623,9 +652,9 @@ object Planilha {
                 val ym = Recorrentes.ym(data)
                 val existente = db.recurring().firstOrNull { n(it.merchant) == n(desc) && it.cents == valor }
                 if (existente == null) {
-                    Recorrentes.criar(db, valor, desc, categoria, data, pay, "importado")
+                    Recorrentes.criar(db, valor, desc, categoria, data, pay, fonte)
                 } else {
-                    db.insertExpense(Expense(0, valor, desc, categoria, data, "importado", pay = pay, fixedId = existente.id))
+                    db.insertExpense(Expense(0, valor, desc, categoria, data, fonte, pay = pay, fixedId = existente.id))
                     if (ym > existente.lastYm) db.updateRecurring(existente.copy(lastYm = ym))
                 }
                 gastos++
@@ -642,17 +671,17 @@ object Planilha {
             if (total in 2..48) {
                 atual = atual.coerceIn(1, total)
                 if (criar) {
-                    Installments.register(db, desc, categoria, data, "importado", valor, total, from = atual, pay = pay)
+                    Installments.register(db, desc, categoria, data, fonte, valor, total, from = atual, pay = pay)
                 } else {
                     val chave = "$desc|$total|$valor"
                     val plano = planos.getOrPut(chave) { db.nextPlanId() }
-                    db.insertExpense(Expense(0, valor, desc, categoria, data, "importado", plano, atual, total, pay = pay))
+                    db.insertExpense(Expense(0, valor, desc, categoria, data, fonte, plano, atual, total, pay = pay))
                 }
             } else {
-                db.insertExpense(Expense(0, valor, desc, categoria, data, "importado", pay = pay))
+                db.insertExpense(Expense(0, valor, desc, categoria, data, fonte, pay = pay))
             }
             gastos++
         }
-        return Resultado(gastos, entradas, repetidas, erros, reconhecido)
+        return Resultado(gastos, entradas, repetidas, erros, reconhecido, removidos)
     }
 }

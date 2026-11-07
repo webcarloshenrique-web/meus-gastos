@@ -200,6 +200,7 @@ fun ImportResultDialog(r: Planilha.Resultado, onDismiss: () -> Unit) {
                 if (!r.reconhecido) {
                     Text("Não encontrei a linha de cabeçalho (precisa ter pelo menos as colunas \"Data\" e \"Valor\"). Baixe o modelo em 📥 Importar planilha.")
                 } else {
+                    if (r.removidos > 0) Text("🔄 Importação anterior substituída (${r.removidos} registros removidos)")
                     Text("🧾 Gastos importados: ${r.gastos}")
                     Text("💰 Entradas importadas: ${r.entradas}")
                     if (r.repetidas > 0) Text("🔁 Já existiam (ignoradas): ${r.repetidas}")
@@ -254,7 +255,7 @@ fun BackupScreen(db: Db, pad: PaddingValues, month: Int) {
     }
     val restaurar = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
-            resultado = Planilha.importar(ctx, db, uri)
+            resultado = Planilha.importar(ctx, db, uri, fonte = "backup", substituir = false)
             Cats.load(db)
             Bus.bump()
         }
@@ -347,11 +348,12 @@ fun ImportScreen(db: Db, pad: PaddingValues) {
     }
     val importar = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
-            resultado = Planilha.importar(ctx, db, uri)
+            resultado = Planilha.importar(ctx, db, uri, fonte = "importado", substituir = true)
             Cats.load(db)
             Bus.bump()
         }
     }
+    val jaImportados = remember(resultado) { db.countBySource("importado") }
     val colunas = listOf(
         Triple("Tipo", "Gasto ou Entrada (vazio = Gasto)", "Gasto"),
         Triple("Data ✱", "Dia do gasto ou da entrada", "15/11/2026"),
@@ -413,7 +415,12 @@ fun ImportScreen(db: Db, pad: PaddingValues) {
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Verde),
         ) { Text("📥 Importar planilha (.xlsx ou .csv)", fontSize = 17.sp) }
-        Hint("Importar o mesmo arquivo duas vezes não duplica: linhas iguais são ignoradas.")
+        AppCard {
+            SectionTitle("🔄 Nova importação substitui a anterior")
+            Hint("Cada vez que você importar uma planilha, tudo o que veio da importação anterior é trocado pelo conteúdo do arquivo novo. Gastos lançados à mão, vindos do banco ou de backup não são mexidos.")
+            if (jaImportados > 0) Text("Hoje há $jaImportados registro(s) vindos de importação.", fontSize = 15.sp, color = TextoForte)
+            Hint("Se o arquivo novo estiver errado (sem cabeçalho ou sem linhas válidas), nada é apagado.")
+        }
         Spacer(Modifier.height(16.dp))
     }
 

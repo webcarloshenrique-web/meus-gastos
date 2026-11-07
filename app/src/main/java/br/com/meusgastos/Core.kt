@@ -201,7 +201,7 @@ object Recorrentes {
     /** Cria um gasto fixo e já lança o gasto da data informada. */
     fun criar(db: Db, cents: Long, merchant: String, category: String?, dateMs: Long, pay: String, source: String = "manual"): Long {
         val dia = Calendar.getInstance().apply { timeInMillis = dateMs }.get(Calendar.DAY_OF_MONTH)
-        val id = db.insertRecurring(Recurring(0, cents, merchant, category, dia, pay, true, dateMs, ym(dateMs)))
+        val id = db.insertRecurring(Recurring(0, cents, merchant, category, dia, pay, true, dateMs, ym(dateMs), source))
         db.insertExpense(Expense(0, cents, merchant, category, dateMs, source, pay = pay, fixedId = id))
         return id
     }

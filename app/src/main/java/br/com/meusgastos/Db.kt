@@ -35,6 +35,7 @@ data class Recurring(
     val active: Boolean,
     val startMs: Long,
     val lastYm: Int,
+    val source: String = "manual",
 )
 
 /** Uma entrada de dinheiro (salário, Pix recebido, depósito...). */
@@ -57,7 +58,7 @@ data class LogEntry(val id: Long, val pkg: String, val text: String, val dateMs:
  * Banco de dados local (fica só no celular).
  * Regra de segurança: só apaga um gasto quando VOCÊ toca em "Apagar".
  */
-class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", null, 3) {
+class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", null, 4) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -73,6 +74,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         )
         createV2(db)
         createV3(db)
+        createV4(db)
     }
 
     /** Atualização da versão 1 para a 2: nada é apagado, só são adicionadas colunas e tabelas. */
@@ -88,6 +90,12 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
             db.execSQL("ALTER TABLE expenses ADD COLUMN fixed_id INTEGER NOT NULL DEFAULT 0")
             createV3(db)
         }
+        if (oldVersion < 4) createV4(db)
+    }
+
+    /** Marca de onde veio cada gasto fixo (para poder substituir uma importação). */
+    private fun createV4(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE recurring ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
     }
 
     private fun createV3(db: SQLiteDatabase) {
@@ -258,6 +266,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         cv.put("active", if (r.active) 1 else 0)
         cv.put("start_ms", r.startMs)
         cv.put("last_ym", r.lastYm)
+        cv.put("source", r.source)
         return writableDatabase.insert("recurring", null, cv)
     }
 
@@ -312,6 +321,38 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
             arrayOf(cents.toString(), fromMs.toString(), toMs.toString())
         )
     ).firstOrNull()
+
+    /**
+     * Apaga tudo o que veio de uma origem (ex.: "importado"): gastos, entradas e gastos fixos
+     * criados por ela, com os lançamentos automáticos desses fixos. Retorna quantos registros saíram.
+     */
+    fun deleteBySource(source: String): Int {
+        val w = writableDatabase
+        var n = 0
+        w.beginTransaction()
+        try {
+            val ids = ArrayList<Long>()
+            w.rawQuery("SELECT id FROM recurring WHERE source = ?", arrayOf(source)).use {
+                while (it.moveToNext()) ids.add(it.getLong(0))
+            }
+            for (id in ids) {
+                n += w.delete("expenses", "fixed_id = ? AND source IN ('fixo', ?)", arrayOf(id.toString(), source))
+                w.delete("recurring", "id = ?", arrayOf(id.toString()))
+                w.execSQL("UPDATE expenses SET fixed_id = 0 WHERE fixed_id = ?", arrayOf<Any>(id))
+            }
+            n += w.delete("expenses", "source = ?", arrayOf(source))
+            n += w.delete("incomes", "source = ?", arrayOf(source))
+            w.setTransactionSuccessful()
+        } finally {
+            w.endTransaction()
+        }
+        return n
+    }
+
+    fun countBySource(source: String): Int = (
+        sum("SELECT COUNT(*) FROM expenses WHERE source = ?", arrayOf(source)) +
+            sum("SELECT COUNT(*) FROM incomes WHERE source = ?", arrayOf(source))
+        ).toInt()
 
     // ---------- Entradas (receitas) ----------
 
