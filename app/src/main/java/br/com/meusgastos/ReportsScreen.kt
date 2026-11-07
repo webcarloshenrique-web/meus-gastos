@@ -41,10 +41,15 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
     var modo by rememberSaveable { mutableIntStateOf(0) }
     var abrirAnalise by rememberSaveable { mutableStateOf(false) }
     val range = remember(month) { Dates.range(month) }
-    val lista = remember(tick, month) { db.expenses(range.first, range.second) }
+    // Meses futuros: inclui os gastos fixos previstos (⏳), junto com as parcelas.
+    val lista = remember(tick, month) {
+        db.expenses(range.first, range.second) + if (month > 0) Recorrentes.previstos(db, month) else emptyList()
+    }
     val anterior = remember(tick, month) { val r = Dates.range(month - 1); db.expenses(r.first, r.second) }
     val meses = (month - 4..month).toList()
-    val porMes = remember(tick, month) { meses.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) } }
+    val porMes = remember(tick, month) {
+        meses.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) + if (o > 0) Recorrentes.totalPrevisto(db, o) else 0L }
+    }
     val entradasMes = remember(tick, month) { meses.map { o -> val r = Dates.range(o); db.sumIncome(r.first, r.second) } }
     val saldo = remember(tick, month) { Budget.saldo(db, month) }
     val dim = Dates.daysIn(month)
