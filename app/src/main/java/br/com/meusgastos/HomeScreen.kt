@@ -47,6 +47,7 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
     val aVencer = previstos.sumOf { it.cents }
     // Meses futuros: parcelas + fixos previstos, tudo junto. Mês atual: só o que já aconteceu.
     val lista = if (month > 0) (reais + previstos).sortedByDescending { it.dateMs } else reais
+    val listaVisivel = (reais + previstos).sortedByDescending { it.dateMs }
     val prevTotal = remember(tick, month) { val r = Dates.range(month - 1); db.sumBetween(r.first, r.second) }
     val meses = (month - 4..month).toList()
     val last5 = remember(tick, month) {
@@ -105,7 +106,13 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
                             Pill("🧾 ${lista.size} gastos")
                         }
                     }
-                    if (month == 0 && aVencer > 0) Pill("⏳ Ainda vão vencer: ${money(aVencer)} em fixos")
+                    if (month == 0 && aVencer > 0) {
+                        Pill("⏳ + ${money(aVencer)} em fixos que ainda vão vencer")
+                        Text(
+                            "Total do mês com os fixos: ${money(total + aVencer)}",
+                            color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                        )
+                    }
                     saldo.projecaoGasto?.let { Pill("🔮 Previsão de gastos: ${money(it)}") }
                 }
             }
@@ -218,7 +225,7 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         StatBox("Por mês", compact(fixos.sumOf { it.cents }), Modifier.weight(1f))
                         StatBox("Já lançados", compact(fixosLancados), Modifier.weight(1f))
-                        StatBox("Contas", "${fixos.size}", Modifier.weight(1f))
+                        StatBox("A vencer", compact(aVencer), Modifier.weight(1f), Laranja)
                     }
                     if (month == 0) {
                         val proximos = fixos.filter { it.day > Dates.today() }.take(3)
@@ -293,15 +300,15 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
             }
         }
 
-        if (lista.isNotEmpty()) {
+        if (listaVisivel.isNotEmpty()) {
             item {
                 AppCard(Modifier.padding(horizontal = 16.dp)) {
-                    SectionTitle(if (month > 0) "📆 Previsto para este mês" else "🕒 Últimos gastos")
-                    Hint(if (month > 0) "⏳ previsto = gasto fixo que ainda vai vencer" else "Toque em um gasto para corrigir ou apagar")
-                    lista.take(if (month > 0) 15 else 8).forEach { e ->
+                    SectionTitle(if (month > 0) "📆 Previsto para este mês" else "🕒 Gastos do mês")
+                    Hint(if (previstos.isNotEmpty()) "⏳ previsto = gasto fixo que ainda vai vencer (toque para ver os fixos)" else "Toque em um gasto para corrigir ou apagar")
+                    listaVisivel.take(if (month > 0) 15 else 8 + previstos.size).forEach { e ->
                         ExpenseItem(e) { if (e.source == Recorrentes.PREVISTO) go(Screen.FIXED) else editando = e }
                     }
-                    if (lista.size > 8) {
+                    if (listaVisivel.size > 8 + previstos.size) {
                         TextButton(onClick = { go(Screen.CALENDAR) }) { Text("Ver todos no calendário ›", fontSize = 15.sp) }
                     }
                 }

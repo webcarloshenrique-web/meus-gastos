@@ -401,12 +401,12 @@ object Planilha {
             listOf("COMO PREENCHER", ""),
             listOf("Coluna", "O que colocar"),
             listOf("Tipo", "Gasto ou Entrada. Se deixar vazio, conta como Gasto."),
-            listOf("Data", "Obrigatória. Ex.: 15/11/2026"),
+            listOf("Data", "Obrigatória. Ex.: 15/11/2026. Para compra parcelada: a data da COMPRA (1ª parcela). Para gasto fixo: um dia em que venceu (o app repete nesse dia todo mês)."),
             listOf("Hora", "Opcional. Ex.: 14:30"),
             listOf("Descrição", "Onde gastou ou de onde veio o dinheiro. Ex.: Padaria, Salário"),
             listOf("Categoria", "Opcional. Use uma categoria do app (ex.: Alimentação). Se não existir, o app cria. Vazio = o app tenta adivinhar."),
             listOf("Valor (R$)", "Obrigatório. Ex.: 25,90 (para parcelado, o valor de UMA parcela)"),
-            listOf("Parcela atual", "Só para compra parcelada: a última parcela que você pagou. Ex.: 4"),
+            listOf("Parcela atual", "Só para compra parcelada: a parcela deste mês. Ex.: comprou em 10 vezes em julho, em novembro é a 5."),
             listOf("Total de parcelas", "Só para compra parcelada: em quantas vezes. Ex.: 10"),
             listOf("Criar próximas parcelas?", "Sim = o app cria sozinho as parcelas que faltam nos próximos meses. Não = lança só esta linha."),
             listOf("Forma de pagamento", "Opcional: Crédito, Débito, Pix, Dinheiro ou Boleto."),
@@ -671,7 +671,11 @@ object Planilha {
             if (total in 2..48) {
                 atual = atual.coerceIn(1, total)
                 if (criar) {
-                    Installments.register(db, desc, categoria, data, fonte, valor, total, from = atual, pay = pay)
+                    // Data = data da COMPRA (1ª parcela): a parcela atual cai (atual - 1) meses depois.
+                    // Se isso der muito no futuro, entende a data como o pagamento da parcela atual.
+                    val naParcelaAtual = Calendar.getInstance().apply { timeInMillis = data; add(Calendar.MONTH, atual - 1) }.timeInMillis
+                    val base = if (naParcelaAtual <= System.currentTimeMillis() + 31L * Dates.DAY_MS) naParcelaAtual else data
+                    Installments.register(db, desc, categoria, base, fonte, valor, total, from = atual, pay = pay)
                 } else {
                     val chave = "$desc|$total|$valor"
                     val plano = planos.getOrPut(chave) { db.nextPlanId() }

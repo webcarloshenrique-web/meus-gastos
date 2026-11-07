@@ -356,12 +356,12 @@ fun ImportScreen(db: Db, pad: PaddingValues) {
     val jaImportados = remember(resultado) { db.countBySource("importado") }
     val colunas = listOf(
         Triple("Tipo", "Gasto ou Entrada (vazio = Gasto)", "Gasto"),
-        Triple("Data ✱", "Dia do gasto ou da entrada", "15/11/2026"),
+        Triple("Data ✱", "Dia do gasto. Parcelado: data da compra", "15/11/2026"),
         Triple("Hora", "Opcional", "14:30"),
         Triple("Descrição", "Onde gastou / de onde veio", "Padaria"),
         Triple("Categoria", "Uma categoria do app. Vazio = o app adivinha", "Alimentação"),
         Triple("Valor (R$) ✱", "Parcelado: valor de UMA parcela", "25,90"),
-        Triple("Parcela atual", "Só se for parcelado: a última paga", "4"),
+        Triple("Parcela atual", "Só se for parcelado: a parcela deste mês", "5"),
         Triple("Total de parcelas", "Só se for parcelado", "10"),
         Triple("Criar próximas parcelas?", "Sim = cria as que faltam nos próximos meses", "Sim"),
         Triple("Forma de pagamento", "Crédito, Débito, Pix, Dinheiro ou Boleto", "Pix"),
