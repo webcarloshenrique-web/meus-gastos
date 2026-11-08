@@ -61,7 +61,7 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
     val porMes = remember(tick, month) {
         meses.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) + if (o > 0) Recorrentes.totalPrevisto(db, o) else 0L }
     }
-    val entradasMes = remember(tick, month) { meses.map { o -> val r = Dates.range(o); db.sumIncome(r.first, r.second) } }
+    val entradasMes = remember(tick, month) { meses.map { o -> db.sumIncomeMonth(Recorrentes.ym(Dates.range(o).first)) } }
     val saldo = remember(tick, month) { Budget.saldo(db, month) }
     val dim = Dates.daysIn(month)
     val porDia = remember(lista, dim) {

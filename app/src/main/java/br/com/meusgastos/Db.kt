@@ -50,6 +50,8 @@ data class Income(
     val source: String,
     /** Fonte que enviou (CNPJ ou nome), para reconhecer o salário. */
     val payer: String = "",
+    /** Mês que esta entrada paga (ano*12+mês). 0 = o próprio mês em que caiu. */
+    val compYm: Int = 0,
 )
 
 /**
@@ -63,6 +65,8 @@ data class Payer(
     val status: Int,
     val baseCents: Long,
     val lastCents: Long,
+    /** -1 = o salário paga o mês anterior (cai em novembro, paga outubro); 0 = paga o mesmo mês. */
+    val refOffset: Int = -1,
 )
 
 /** Categoria (as padrão e as que você criar). color = ARGB, ex.: 0xFFF4A261 */
@@ -75,7 +79,7 @@ data class LogEntry(val id: Long, val pkg: String, val text: String, val dateMs:
  * Banco de dados local (fica só no celular).
  * Regra de segurança: só apaga um gasto quando VOCÊ toca em "Apagar".
  */
-class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", null, 6) {
+class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", null, 7) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -94,6 +98,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         createV4(db)
         createV5(db)
         createV6(db)
+        createV7(db)
     }
 
     /** Atualização da versão 1 para a 2: nada é apagado, só são adicionadas colunas e tabelas. */
@@ -112,6 +117,17 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         if (oldVersion < 4) createV4(db)
         if (oldVersion < 5) createV5(db)
         if (oldVersion < 6) createV6(db)
+        if (oldVersion < 7) createV7(db)
+    }
+
+    /** Mês de referência das entradas (o salário de novembro pode pagar outubro). */
+    private fun createV7(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE incomes ADD COLUMN comp_ym INTEGER NOT NULL DEFAULT 0")
+        db.execSQL(
+            "UPDATE incomes SET comp_ym = CAST(strftime('%Y', date_ms / 1000, 'unixepoch', 'localtime') AS INTEGER) * 12 + " +
+                "CAST(strftime('%m', date_ms / 1000, 'unixepoch', 'localtime') AS INTEGER) - 1"
+        )
+        db.execSQL("ALTER TABLE payers ADD COLUMN ref_offset INTEGER NOT NULL DEFAULT -1")
     }
 
     private fun createV6(db: SQLiteDatabase) {
@@ -420,6 +436,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         cv.put("date_ms", i.dateMs)
         cv.put("source", i.source)
         cv.put("payer", i.payer)
+        cv.put("comp_ym", if (i.compYm != 0) i.compYm else Recorrentes.ym(i.dateMs))
         return writableDatabase.insert("incomes", null, cv)
     }
 
@@ -428,16 +445,36 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         cv.put("cents", i.cents)
         cv.put("descr", i.desc)
         cv.put("kind", i.kind)
+        if (i.compYm != 0) cv.put("comp_ym", i.compYm)
         writableDatabase.update("incomes", cv, "id = ?", arrayOf(i.id.toString()))
     }
 
     fun incomesByPayer(key: String): List<Income> {
         val out = ArrayList<Income>()
         readableDatabase.rawQuery(
-            "SELECT id, cents, descr, kind, date_ms, source, payer FROM incomes WHERE payer = ? ORDER BY date_ms",
+            "SELECT id, cents, descr, kind, date_ms, source, payer, comp_ym FROM incomes WHERE payer = ? ORDER BY date_ms",
             arrayOf(key)
         ).use {
-            while (it.moveToNext()) out.add(Income(it.getLong(0), it.getLong(1), it.getString(2), it.getString(3), it.getLong(4), it.getString(5), it.getString(6)))
+            while (it.moveToNext()) out.add(Income(it.getLong(0), it.getLong(1), it.getString(2), it.getString(3), it.getLong(4), it.getString(5), it.getString(6), it.getInt(7)))
+        }
+        return out
+    }
+
+    /** Entradas que pagam o mês [ym] (pelo mês de referência, não pela data em que caíram). */
+    fun incomesMonth(ym: Int): List<Income> = incomesWhere("comp_ym = ?", arrayOf(ym.toString()))
+
+    fun sumIncomeMonth(ym: Int): Long = sum("SELECT COALESCE(SUM(cents), 0) FROM incomes WHERE comp_ym = ?", arrayOf(ym.toString()))
+
+    /** Entradas que caíram no período mas pagam outro mês. */
+    fun incomesForOtherMonth(fromMs: Long, toMs: Long, ym: Int): List<Income> =
+        incomesWhere("date_ms >= ? AND date_ms < ? AND comp_ym <> ?", arrayOf(fromMs.toString(), toMs.toString(), ym.toString()))
+
+    private fun incomesWhere(where: String, args: Array<String>): List<Income> {
+        val out = ArrayList<Income>()
+        readableDatabase.rawQuery(
+            "SELECT id, cents, descr, kind, date_ms, source, payer, comp_ym FROM incomes WHERE $where ORDER BY date_ms DESC", args
+        ).use {
+            while (it.moveToNext()) out.add(Income(it.getLong(0), it.getLong(1), it.getString(2), it.getString(3), it.getLong(4), it.getString(5), it.getString(6) ?: "", it.getInt(7)))
         }
         return out
     }
@@ -450,27 +487,27 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
 
     private fun payers(where: String, args: Array<String>): List<Payer> {
         val out = ArrayList<Payer>()
-        readableDatabase.rawQuery("SELECT pkey, name, cnpj, status, base_cents, last_cents FROM payers $where ORDER BY name", args).use {
-            while (it.moveToNext()) out.add(Payer(it.getString(0), it.getString(1), it.getString(2), it.getInt(3), it.getLong(4), it.getLong(5)))
+        readableDatabase.rawQuery("SELECT pkey, name, cnpj, status, base_cents, last_cents, ref_offset FROM payers $where ORDER BY name", args).use {
+            while (it.moveToNext()) out.add(Payer(it.getString(0), it.getString(1), it.getString(2), it.getInt(3), it.getLong(4), it.getLong(5), it.getInt(6)))
         }
         return out
     }
 
     fun savePayer(p: Payer) {
         writableDatabase.execSQL(
-            "INSERT OR REPLACE INTO payers (pkey, name, cnpj, status, base_cents, last_cents) VALUES (?, ?, ?, ?, ?, ?)",
-            arrayOf<Any>(p.key, p.name, p.cnpj, p.status, p.baseCents, p.lastCents)
+            "INSERT OR REPLACE INTO payers (pkey, name, cnpj, status, base_cents, last_cents, ref_offset) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            arrayOf<Any>(p.key, p.name, p.cnpj, p.status, p.baseCents, p.lastCents, p.refOffset)
         )
     }
 
     fun incomes(fromMs: Long, toMs: Long): List<Income> {
         val out = ArrayList<Income>()
         readableDatabase.rawQuery(
-            "SELECT id, cents, descr, kind, date_ms, source, payer FROM incomes WHERE date_ms >= ? AND date_ms < ? ORDER BY date_ms DESC",
+            "SELECT id, cents, descr, kind, date_ms, source, payer, comp_ym FROM incomes WHERE date_ms >= ? AND date_ms < ? ORDER BY date_ms DESC",
             arrayOf(fromMs.toString(), toMs.toString())
         ).use {
             while (it.moveToNext()) {
-                out.add(Income(it.getLong(0), it.getLong(1), it.getString(2), it.getString(3), it.getLong(4), it.getString(5), it.getString(6) ?: ""))
+                out.add(Income(it.getLong(0), it.getLong(1), it.getString(2), it.getString(3), it.getLong(4), it.getString(5), it.getString(6) ?: "", it.getInt(7)))
             }
         }
         return out

@@ -201,25 +201,29 @@ object Salario {
 
     private fun lancarSalario(db: Db, p: Payer, cents: Long, time: Long, source: String) {
         val nome = p.name.ifBlank { "empresa" }
+        val comp = Recorrentes.ym(time) + p.refOffset
         if (p.baseCents in 1 until cents) {
-            db.insertIncome(Income(0, p.baseCents, "Salário de $nome", "Salário", time, source, p.key))
-            db.insertIncome(Income(0, cents - p.baseCents, "Extra de $nome", "Extra", time, source, p.key))
+            db.insertIncome(Income(0, p.baseCents, "Salário de $nome", "Salário", time, source, p.key, comp))
+            db.insertIncome(Income(0, cents - p.baseCents, "Extra de $nome", "Extra", time, source, p.key, comp))
         } else {
-            db.insertIncome(Income(0, cents, "Salário de $nome", "Salário", time, source, p.key))
+            db.insertIncome(Income(0, cents, "Salário de $nome", "Salário", time, source, p.key, comp))
         }
     }
 
     /** Você confirmou: é salário, com este líquido. Ajusta também as entradas já recebidas dessa fonte. */
-    fun confirmar(db: Db, p: Payer, base: Long) {
-        val novo = p.copy(status = 1, baseCents = base)
+    fun confirmar(db: Db, p: Payer, base: Long, refOffset: Int = p.refOffset) {
+        val novo = p.copy(status = 1, baseCents = base, refOffset = refOffset)
         db.savePayer(novo)
         val nome = p.name.ifBlank { "empresa" }
-        db.incomesByPayer(p.key).filter { it.kind != "Extra" }.forEach { i ->
-            if (base in 1 until i.cents) {
-                db.updateIncome(i.copy(cents = base, kind = "Salário", desc = "Salário de $nome"))
-                db.insertIncome(Income(0, i.cents - base, "Extra de $nome", "Extra", i.dateMs, i.source, p.key))
-            } else {
-                db.updateIncome(i.copy(kind = "Salário", desc = "Salário de $nome"))
+        db.incomesByPayer(p.key).forEach { i ->
+            val comp = Recorrentes.ym(i.dateMs) + refOffset
+            when {
+                i.kind == "Extra" -> db.updateIncome(i.copy(compYm = comp))
+                base in 1 until i.cents -> {
+                    db.updateIncome(i.copy(cents = base, kind = "Salário", desc = "Salário de $nome", compYm = comp))
+                    db.insertIncome(Income(0, i.cents - base, "Extra de $nome", "Extra", i.dateMs, i.source, p.key, comp))
+                }
+                else -> db.updateIncome(i.copy(kind = "Salário", desc = "Salário de $nome", compYm = comp))
             }
         }
     }

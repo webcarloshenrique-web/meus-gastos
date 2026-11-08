@@ -304,9 +304,9 @@ object Planilha {
     /** Os mesmos cabeçalhos servem para exportar e importar. */
     val CABECALHO = listOf(
         "Tipo", "Data", "Hora", "Descrição", "Categoria", "Valor (R$)",
-        "Parcela atual", "Total de parcelas", "Criar próximas parcelas?", "Forma de pagamento", "Fixo?", "Cartão",
+        "Parcela atual", "Total de parcelas", "Criar próximas parcelas?", "Forma de pagamento", "Fixo?", "Cartão", "Mês de referência",
     )
-    private val LARGURAS = listOf(10, 12, 8, 30, 18, 14, 13, 17, 24, 19, 8, 22)
+    private val LARGURAS = listOf(10, 12, 8, 30, 18, 14, 13, 17, 24, 19, 8, 22, 18)
 
     private val dF = SimpleDateFormat("dd/MM/yyyy", ptBR)
     private val hF = SimpleDateFormat("HH:mm", ptBR)
@@ -329,7 +329,8 @@ object Planilha {
         }
         db.incomes(de, ate).sortedBy { it.dateMs }.forEach {
             val d = Date(it.dateMs)
-            rows.add(listOf("Entrada", dF.format(d), hF.format(d), it.desc, it.kind, Dinheiro(it.cents), null, null, null))
+            val ref = if (it.compYm > 0) String.format(Locale.US, "%02d/%d", it.compYm % 12 + 1, it.compYm / 12) else ""
+            rows.add(listOf("Entrada", dF.format(d), hF.format(d), it.desc, it.kind, Dinheiro(it.cents), null, null, null, null, null, null, ref))
         }
         return rows
     }
@@ -412,6 +413,7 @@ object Planilha {
             listOf("Forma de pagamento", "Opcional: Crédito, Débito, Pix, Dinheiro ou Boleto."),
             listOf("Fixo?", "Sim = conta que repete todo mês (aluguel, internet…). O app passa a lançar sozinho no mesmo dia, todo mês."),
             listOf("Cartão", "Opcional: banco e final do cartão. Ex.: Banco do Brasil 2332 ou Nubank 7592."),
+            listOf("Mês de referência", "Só para entradas, opcional: o mês que o dinheiro paga. Ex.: salário que caiu em 03/11 e paga outubro = 10/2026."),
             listOf("", ""),
             listOf("Dicas", ""),
             listOf("1", "Apague as linhas de exemplo antes de importar (ou mantenha, se quiser testar)."),
@@ -487,6 +489,7 @@ object Planilha {
                 h.startsWith("forma") || h.startsWith("pagamento") || h.startsWith("meio") -> "pay"
                 h.startsWith("fixo") || h.startsWith("recorrente") -> "fixo"
                 h.startsWith("cartao") -> "card"
+                h.startsWith("mes de ref") || h.startsWith("referen") -> "ref"
                 else -> null
             }
             if (k != null && !m.containsKey(k)) m[k] = i
@@ -631,7 +634,9 @@ object Planilha {
                 val kind = tipoEntrada(cel("cat").ifBlank { cel("tipo") })
                 val desc = cel("desc").ifBlank { kind }
                 if (db.existsIncome(valor, desc, data)) { repetidas++; return@forEachIndexed }
-                db.insertIncome(Income(0, valor, desc, kind, data, fonte))
+                val refM = Regex("""(\d{1,2})\s*/\s*(\d{4})""").find(cel("ref"))
+                val comp = if (refM != null) refM.groupValues[2].toInt() * 12 + refM.groupValues[1].toInt() - 1 else 0
+                db.insertIncome(Income(0, valor, desc, kind, data, fonte, compYm = comp))
                 entradas++
                 return@forEachIndexed
             }

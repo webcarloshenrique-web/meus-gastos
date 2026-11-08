@@ -73,7 +73,11 @@ fun IncomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit)
     val ctx = LocalContext.current
     val tick = Bus.tick.intValue
     val range = remember(month) { Dates.range(month) }
-    val lista = remember(tick, month) { db.incomes(range.first, range.second) }
+    val ymMes = remember(month) { Recorrentes.ym(range.first) }
+    // Entradas que pagam este mês (o salário que caiu no começo do mês seguinte aparece aqui)
+    val lista = remember(tick, month) { db.incomesMonth(ymMes) }
+    val foraDoMes = remember(tick, month) { db.incomesForOtherMonth(range.first, range.second, ymMes) }
+    var refAnterior by remember { mutableStateOf(java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH) <= 10) }
     val saldo = remember(tick, month) { Budget.saldo(db, month) }
     var valor by remember { mutableLongStateOf(0L) }
     var desc by remember { mutableStateOf("") }
@@ -115,6 +119,20 @@ fun IncomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit)
                         StatBox("💵 Outras", compact(saldo.entrou - salarioMes - extrasMes), Modifier.weight(1f))
                     }
                 }
+                if (foraDoMes.isNotEmpty()) {
+                    val porMes = foraDoMes.groupBy { it.compYm }
+                    porMes.forEach { (ym, l) ->
+                        val o = ym - ymMes + month
+                        Text(
+                            "➡️ ${money(l.sumOf { it.cents })} que caíram em ${Dates.abbr(month)} pagam ${Dates.full(o)}.",
+                            fontSize = 14.sp, color = TextoForte,
+                            modifier = Modifier.clickable { onMonth(o) },
+                        )
+                    }
+                }
+                if (month == 0 && saldo.estimada) {
+                    Hint("O salário que paga ${Dates.abbr(0)} ainda não caiu; por enquanto o app usa a média dos meses anteriores (${money(saldo.renda)}).")
+                }
                 Hint("Pix recebidos, depósitos e salário avisados pelo banco entram sozinhos (pode desligar em Ajustes).")
             }
         }
@@ -153,7 +171,11 @@ fun IncomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit)
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text(p.name.ifBlank { p.cnpj }, fontWeight = FontWeight.Bold, color = TextoForte, maxLines = 1)
-                                Hint("Líquido normal: ${money(p.baseCents)} · acima disso = ✨ Extra" + if (p.cnpj.isNotBlank()) " · CNPJ ${p.cnpj}" else "")
+                                Hint(
+                                    "Líquido normal: ${money(p.baseCents)} · acima disso = ✨ Extra · " +
+                                        (if (p.refOffset == -1) "paga o mês anterior" else "paga o mesmo mês") +
+                                        (if (p.cnpj.isNotBlank()) " · CNPJ ${p.cnpj}" else "")
+                                )
                             }
                             Text("✏️", fontSize = 18.sp)
                         }
@@ -172,6 +194,16 @@ fun IncomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     TIPOS_ENTRADA.drop(2).forEachIndexed { j, (r, _) -> Chip(r, tipo == j + 2, Modifier.weight(1f)) { tipo = j + 2 } }
                 }
+                if (TIPOS_ENTRADA[tipo].second == "Salário" || TIPOS_ENTRADA[tipo].second == "Extra") {
+                    Text("Esse dinheiro paga as contas de qual mês?", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = TextoForte)
+                    val c = java.util.Calendar.getInstance().apply { timeInMillis = data }
+                    val abDaData = Dates.ABBR[c.get(java.util.Calendar.MONTH)]
+                    val abAnterior = Dates.ABBR[(c.get(java.util.Calendar.MONTH) + 11) % 12]
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Chip("Paga $abAnterior", refAnterior, Modifier.weight(1f)) { refAnterior = true }
+                        Chip("Paga $abDaData", !refAnterior, Modifier.weight(1f)) { refAnterior = false }
+                    }
+                }
                 OutlinedTextField(
                     value = desc, onValueChange = { desc = it },
                     placeholder = { Text("Descrição (opcional): ex. salário da empresa") },
@@ -184,7 +216,8 @@ fun IncomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit)
                             Toast.makeText(ctx, "Digite o valor", Toast.LENGTH_SHORT).show()
                         } else {
                             val k = TIPOS_ENTRADA[tipo].second
-                            db.insertIncome(Income(0, valor, desc.trim().ifBlank { k }, k, data, "manual"))
+                            val comp = Recorrentes.ym(data) + if ((k == "Salário" || k == "Extra") && refAnterior) -1 else 0
+                            db.insertIncome(Income(0, valor, desc.trim().ifBlank { k }, k, data, "manual", compYm = comp))
                             Bus.bump()
                             Toast.makeText(ctx, "Entrada salva! ✅", Toast.LENGTH_SHORT).show()
                             valor = 0; desc = ""
@@ -212,7 +245,11 @@ fun IncomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(i.desc, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte, maxLines = 1)
-                            Hint(dateFmt.format(Date(i.dateMs)) + if (i.source != "manual" && i.source != "backup") " · automático" else "")
+                            val caiuEm = Recorrentes.ym(i.dateMs) != i.compYm
+                            Hint(
+                                (if (caiuEm) "caiu em " else "") + dateFmt.format(Date(i.dateMs)) +
+                                    (if (i.source != "manual" && i.source != "backup") " · automático" else "")
+                            )
                         }
                         Text("+ ${money(i.cents)}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = VerdeOk)
                     }
@@ -224,6 +261,7 @@ fun IncomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit)
 
     confirmando?.let { p ->
         var base by remember(p.key) { mutableLongStateOf(if (p.baseCents > 0) p.baseCents else p.lastCents) }
+        var offset by remember(p.key) { mutableIntStateOf(p.refOffset) }
         AlertDialog(
             onDismissRequest = { confirmando = null },
             title = { Text("💼 Salário líquido") },
@@ -232,6 +270,12 @@ fun IncomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit)
                     Text("Qual é o valor líquido que normalmente cai de ${p.name.ifBlank { "essa fonte" }}?", color = TextoForte)
                     MoneyField(base, { base = it }, big = true)
                     Hint("Daqui pra frente, até ${money(base)} conta como 💼 Salário. O que passar disso (hora extra, bônus, 13º…) vira ✨ Extra. As entradas já recebidas dessa fonte também são ajustadas.")
+                    Text("Esse salário paga as contas de qual mês?", fontWeight = FontWeight.Medium, color = TextoForte)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Chip("Mês anterior", offset == -1, Modifier.weight(1f)) { offset = -1 }
+                        Chip("Mesmo mês", offset == 0, Modifier.weight(1f)) { offset = 0 }
+                    }
+                    Hint(if (offset == -1) "Ex.: caiu em 3 de novembro → paga outubro." else "Ex.: caiu em 30 de outubro → paga outubro.")
                     if (p.status == 1) {
                         TextButton(onClick = { Salario.remover(db, p); Bus.bump(); confirmando = null }) {
                             Text("Não é mais meu salário", color = Vermelho)
@@ -242,7 +286,7 @@ fun IncomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit)
             confirmButton = {
                 Button(
                     onClick = {
-                        if (base > 0) { Salario.confirmar(db, p, base); Bus.bump(); confirmando = null }
+                        if (base > 0) { Salario.confirmar(db, p, base, offset); Bus.bump(); confirmando = null }
                         else Toast.makeText(ctx, "Digite o valor líquido", Toast.LENGTH_SHORT).show()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Verde),

@@ -19,9 +19,11 @@ data class Saldo(
 object Budget {
     fun saldo(db: Db, month: Int): Saldo {
         val r = Dates.range(month)
-        val entrou = db.sumIncome(r.first, r.second)
+        // Entradas contam pelo mês que pagam (ex.: salário que cai em novembro paga outubro)
+        val ym = Recorrentes.ym(r.first)
+        val entrou = db.sumIncomeMonth(ym)
         val saiu = db.sumBetween(r.first, r.second)
-        val anteriores = (1..3).map { val x = Dates.range(month - it); db.sumIncome(x.first, x.second) }.filter { it > 0 }
+        val anteriores = (1..3).map { db.sumIncomeMonth(ym - it) }.filter { it > 0 }
         val media = if (anteriores.isEmpty()) 0L else anteriores.sum() / anteriores.size
         val renda = if (entrou > 0) entrou else media
         val hoje = Dates.today()
