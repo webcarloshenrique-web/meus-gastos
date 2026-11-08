@@ -61,6 +61,7 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
         meses.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) + if (o > 0) Recorrentes.totalPrevisto(db, o) else 0L }
     }
     val pendentes = remember(tick) { db.pendingCount() }
+    val salarioPendente = remember(tick) { db.payersPending().firstOrNull() }
     val saldo = remember(tick, month) { Budget.saldo(db, month) }
     val limites = remember(tick) { db.limits() }
     val alertPct = remember(tick) { Prefs.alertPct(ctx) }
@@ -165,6 +166,25 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
                             colors = ButtonDefaults.buttonColors(containerColor = Verde),
                         ) { Text("Registrar entrada") }
                     }
+                }
+            }
+        }
+
+        // Confirmar salário
+        if (salarioPendente != null) {
+            item {
+                Row(
+                    Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp))
+                        .background(Color(0xFFE6F4EA)).clickable { go(Screen.INCOME) }.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("💼", fontSize = 26.sp)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Isso é o seu salário?", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextoForte)
+                        Hint("Entraram ${money(salarioPendente.lastCents)} de ${salarioPendente.name.ifBlank { "uma empresa" }}. Toque para confirmar.")
+                    }
+                    Text("›", fontSize = 28.sp, color = TextoSuave)
                 }
             }
         }

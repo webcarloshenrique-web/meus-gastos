@@ -167,6 +167,69 @@ object Cartoes {
     fun curto(card: String): String = if (card.contains('•')) "•" + card.substringAfterLast('•') else card
 }
 
+/**
+ * Salário: na primeira vez que entra dinheiro de uma fonte com "cara" de salário (CNPJ, empresa,
+ * palavra salário ou valor alto), o app pergunta se é o seu salário e qual o líquido normal.
+ * Depois disso, o que vier dessa fonte até o líquido é Salário; o que passar vira Extra.
+ */
+object Salario {
+    private val empresa = Regex("""(?i)\b(ltda|s\.?\s?a\.?|eireli|me|epp|empresa|folha|pagamento|salario|salário|servicos|serviços|comercio|comércio|industria|indústria)\b""")
+
+    fun pareceSalario(e: ParsedIncome): Boolean =
+        e.kind == "Salário" || e.cnpj.isNotBlank() || empresa.containsMatchIn(e.payerName) || e.cents >= 50_000
+
+    /** Grava a entrada já separando salário e extra quando a fonte for conhecida. */
+    fun registrar(ctx: Context, db: Db, e: ParsedIncome, time: Long, pkg: String) {
+        val key = e.payerKey
+        val p = if (key.isNotBlank()) db.payer(key) else null
+        when {
+            p != null && p.status == 1 -> {
+                lancarSalario(db, p, e.cents, time, pkg)
+                db.savePayer(p.copy(lastCents = e.cents))
+            }
+            p == null && key.isNotBlank() && pareceSalario(e) -> {
+                db.insertIncome(Income(0, e.cents, e.desc, e.kind, time, pkg, key))
+                db.savePayer(Payer(key, e.payerName.ifBlank { e.cnpj }, e.cnpj, -1, 0, e.cents))
+                Notifier.askSalary(ctx, e)
+            }
+            else -> {
+                db.insertIncome(Income(0, e.cents, e.desc, e.kind, time, pkg, key))
+                if (p != null) db.savePayer(p.copy(lastCents = e.cents))
+            }
+        }
+    }
+
+    private fun lancarSalario(db: Db, p: Payer, cents: Long, time: Long, source: String) {
+        val nome = p.name.ifBlank { "empresa" }
+        if (p.baseCents in 1 until cents) {
+            db.insertIncome(Income(0, p.baseCents, "Salário de $nome", "Salário", time, source, p.key))
+            db.insertIncome(Income(0, cents - p.baseCents, "Extra de $nome", "Extra", time, source, p.key))
+        } else {
+            db.insertIncome(Income(0, cents, "Salário de $nome", "Salário", time, source, p.key))
+        }
+    }
+
+    /** Você confirmou: é salário, com este líquido. Ajusta também as entradas já recebidas dessa fonte. */
+    fun confirmar(db: Db, p: Payer, base: Long) {
+        val novo = p.copy(status = 1, baseCents = base)
+        db.savePayer(novo)
+        val nome = p.name.ifBlank { "empresa" }
+        db.incomesByPayer(p.key).filter { it.kind != "Extra" }.forEach { i ->
+            if (base in 1 until i.cents) {
+                db.updateIncome(i.copy(cents = base, kind = "Salário", desc = "Salário de $nome"))
+                db.insertIncome(Income(0, i.cents - base, "Extra de $nome", "Extra", i.dateMs, i.source, p.key))
+            } else {
+                db.updateIncome(i.copy(kind = "Salário", desc = "Salário de $nome"))
+            }
+        }
+    }
+
+    fun negar(db: Db, p: Payer) = db.savePayer(p.copy(status = 0))
+
+    /** Volta uma fonte para "não é salário" (as entradas já lançadas continuam como estão). */
+    fun remover(db: Db, p: Payer) = db.savePayer(p.copy(status = 0, baseCents = 0))
+}
+
 /** Formas de pagamento. */
 object Pagamento {
     val opcoes = listOf("Crédito" to "💳", "Débito" to "🏧", "Pix" to "⚡", "Dinheiro" to "💵", "Boleto" to "🧾")
@@ -326,7 +389,7 @@ object Processor {
         if (entrada != null) {
             db.insertLog(pkg, full, time, true)
             if (Prefs.autoIncome(ctx) && !db.hasRecentIncome(entrada.cents, pkg, time - 120_000)) {
-                db.insertIncome(Income(0, entrada.cents, entrada.desc, entrada.kind, time, pkg))
+                Salario.registrar(ctx, db, entrada, time, pkg)
             }
             Bus.bump()
             return
@@ -386,6 +449,21 @@ object Notifier {
             .setAutoCancel(true)
             .build()
         nm.notify(id.toInt(), n)
+    }
+
+    fun askSalary(ctx: Context, e: ParsedIncome) {
+        if (!canNotify(ctx)) return
+        val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
+        nm.createNotificationChannel(NotificationChannel("entradas", "Entradas e salário", NotificationManager.IMPORTANCE_DEFAULT))
+        val quem = e.payerName.ifBlank { "CNPJ ${e.cnpj}" }
+        val n = Notification.Builder(ctx, "entradas")
+            .setSmallIcon(R.drawable.ic_stat)
+            .setContentTitle("💼 Isso é o seu salário?")
+            .setContentText("Entraram ${money(e.cents)} de $quem. Toque para confirmar.")
+            .setContentIntent(openApp(ctx, "INCOME", 2))
+            .setAutoCancel(true)
+            .build()
+        nm.notify(("sal" + e.payerKey).hashCode(), n)
     }
 
     fun limitAlert(ctx: Context, category: String, gasto: Long, limite: Long, pct: Int, nivel: Int) {

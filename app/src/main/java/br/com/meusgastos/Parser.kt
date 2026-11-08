@@ -18,7 +18,17 @@ data class Parsed(
 )
 
 /** Resultado da leitura de uma entrada de dinheiro (Pix recebido, depósito, salário). */
-data class ParsedIncome(val cents: Long, val desc: String, val kind: String)
+data class ParsedIncome(
+    val cents: Long,
+    val desc: String,
+    val kind: String,
+    /** Quem enviou (nome) e CNPJ, quando a notificação informa. */
+    val payerName: String = "",
+    val cnpj: String = "",
+) {
+    /** Identificador da fonte: CNPJ (só números) ou o nome. */
+    val payerKey: String get() = if (cnpj.isNotBlank()) cnpj.filter { it.isDigit() } else Categorizer.norm(payerName).trim()
+}
 
 /**
  * Lê notificações de bancos brasileiros de forma genérica.
@@ -145,6 +155,8 @@ object Parser {
         "devolvid", "não realizad", "nao realizad", "não concluíd", "nao concluid", "cashback",
     )
     private val fromRx = Regex("""(?i)\b(?:de|da|do|por)\s+(?!R\$)(.+)""")
+    private val cnpjRx = Regex("""\b(\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2})\b""")
+    private val docRx = Regex("""(?i)\s*[-–(]?\s*(?:cnpj|cpf)\s*:?\s*[\d.*/\-]*\)?|\s*\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}|\s*[*•]{3}[\d.*\-]+""")
 
     fun parseIncome(title: String, text: String): ParsedIncome? {
         val full = "$title $text".trim()
@@ -162,9 +174,11 @@ object Parser {
             else -> "Outros"
         }
         val after = full.substring(m.range.last + 1)
-        val quem = fromRx.find(after)?.groupValues?.get(1)?.replace(cutRx, "")?.trim()
-        val desc = if (quem != null && quem.length >= 2) "$kind de ${pretty(quem)}" else kind
-        return ParsedIncome(c, desc, kind)
+        val cnpj = cnpjRx.find(full)?.groupValues?.get(1) ?: ""
+        val quem = fromRx.find(after)?.groupValues?.get(1)?.replace(docRx, "")?.replace(cutRx, "")?.trim()
+        val nome = if (quem != null && quem.length >= 2) pretty(quem) else ""
+        val desc = if (nome.isNotBlank()) "$kind de $nome" else kind
+        return ParsedIncome(c, desc, kind, nome, cnpj)
     }
 
     /** "IFOOD   *RESTAURANTE" -> "Ifood *restaurante" (só quando vem tudo em maiúsculas). */

@@ -420,7 +420,7 @@ object Planilha {
             listOf("4", "Importar de novo o mesmo arquivo não duplica: linhas iguais são ignoradas."),
             listOf("", ""),
             listOf("Categorias do app", Cats.list.joinToString(", ") { it.name }),
-            listOf("Tipos de entrada", "Salário, Pix recebido, Depósito, Transferência, Outros"),
+            listOf("Tipos de entrada", "Salário, Extra, Pix recebido, Depósito, Transferência, Outros"),
         )
         val dir = File(ctx.cacheDir, "exports").apply { mkdirs() }
         val f = File(dir, "modelo_meus_gastos.xlsx")
@@ -550,6 +550,7 @@ object Planilha {
         val x = n(s)
         return when {
             x.startsWith("salar") -> "Salário"
+            x.startsWith("extra") -> "Extra"
             x.startsWith("pix") -> "Pix recebido"
             x.startsWith("deposit") -> "Depósito"
             x.startsWith("transf") -> "Transferência"

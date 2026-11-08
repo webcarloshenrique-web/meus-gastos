@@ -55,13 +55,16 @@ import java.util.Date
 
 // ============================================================ Entradas (receitas)
 
-private val TIPOS_ENTRADA = listOf("💼 Salário" to "Salário", "⚡ Pix recebido" to "Pix recebido", "🏦 Depósito" to "Depósito", "💵 Outros" to "Outros")
+private val TIPOS_ENTRADA = listOf(
+    "💼 Salário" to "Salário", "✨ Extra" to "Extra", "⚡ Pix" to "Pix recebido", "🏦 Depósito" to "Depósito", "💵 Outros" to "Outros",
+)
 
 private fun emojiEntrada(kind: String) = when (kind) {
     "Salário" -> "💼"
     "Pix recebido" -> "⚡"
     "Depósito" -> "🏦"
     "Transferência" -> "🔁"
+    "Extra" -> "✨"
     else -> "💵"
 }
 
@@ -77,6 +80,11 @@ fun IncomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit)
     var tipo by remember { mutableIntStateOf(0) }
     var data by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var apagar by remember { mutableStateOf<Income?>(null) }
+    val pendentesSalario = remember(tick) { db.payersPending() }
+    val fontesSalario = remember(tick) { db.salaryPayers() }
+    var confirmando by remember { mutableStateOf<Payer?>(null) }
+    val salarioMes = lista.filter { it.kind == "Salário" }.sumOf { it.cents }
+    val extrasMes = lista.filter { it.kind == "Extra" }.sumOf { it.cents }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(pad),
@@ -100,7 +108,57 @@ fun IncomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit)
                         fontSize = 15.sp, color = if (s >= 0) TextoForte else Vermelho,
                     )
                 }
+                if (salarioMes > 0 || extrasMes > 0) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StatBox("💼 Salário", compact(salarioMes), Modifier.weight(1f), VerdeOk)
+                        StatBox("✨ Extras", compact(extrasMes), Modifier.weight(1f), VerdeOk)
+                        StatBox("💵 Outras", compact(saldo.entrou - salarioMes - extrasMes), Modifier.weight(1f))
+                    }
+                }
                 Hint("Pix recebidos, depósitos e salário avisados pelo banco entram sozinhos (pode desligar em Ajustes).")
+            }
+        }
+
+        // Confirmar se uma entrada é salário (uma vez por fonte)
+        pendentesSalario.forEach { p ->
+            item {
+                AppCard(Modifier.padding(horizontal = 16.dp).border(2.dp, Laranja, RoundedCornerShape(20.dp))) {
+                    SectionTitle("💼 Isso é o seu salário?")
+                    Text(
+                        "Entraram ${money(p.lastCents)} de ${p.name.ifBlank { "uma empresa" }}" +
+                            if (p.cnpj.isNotBlank()) " (CNPJ ${p.cnpj})." else ".",
+                        fontSize = 15.sp, color = TextoForte,
+                    )
+                    Hint("Confirmando, o app passa a reconhecer o seu salário por essa fonte. O que vier acima do seu líquido normal vira ✨ Extra.")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { confirmando = p }, modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = Verde),
+                        ) { Text("Sim, é salário") }
+                        OutlinedButton(onClick = { Salario.negar(db, p); Bus.bump() }, modifier = Modifier.weight(1f)) { Text("Não é") }
+                    }
+                }
+            }
+        }
+
+        // Fontes de salário já confirmadas
+        if (fontesSalario.isNotEmpty()) {
+            item {
+                AppCard(Modifier.padding(horizontal = 16.dp)) {
+                    SectionTitle("💼 Seu salário")
+                    fontesSalario.forEach { p ->
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Fundo).clickable { confirmando = p }.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(p.name.ifBlank { p.cnpj }, fontWeight = FontWeight.Bold, color = TextoForte, maxLines = 1)
+                                Hint("Líquido normal: ${money(p.baseCents)} · acima disso = ✨ Extra" + if (p.cnpj.isNotBlank()) " · CNPJ ${p.cnpj}" else "")
+                            }
+                            Text("✏️", fontSize = 18.sp)
+                        }
+                    }
+                }
             }
         }
 
@@ -162,6 +220,36 @@ fun IncomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit)
                 if (lista.isNotEmpty()) Hint("Toque em uma entrada para apagar (ex.: um Pix que era só devolução).")
             }
         }
+    }
+
+    confirmando?.let { p ->
+        var base by remember(p.key) { mutableLongStateOf(if (p.baseCents > 0) p.baseCents else p.lastCents) }
+        AlertDialog(
+            onDismissRequest = { confirmando = null },
+            title = { Text("💼 Salário líquido") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Qual é o valor líquido que normalmente cai de ${p.name.ifBlank { "essa fonte" }}?", color = TextoForte)
+                    MoneyField(base, { base = it }, big = true)
+                    Hint("Daqui pra frente, até ${money(base)} conta como 💼 Salário. O que passar disso (hora extra, bônus, 13º…) vira ✨ Extra. As entradas já recebidas dessa fonte também são ajustadas.")
+                    if (p.status == 1) {
+                        TextButton(onClick = { Salario.remover(db, p); Bus.bump(); confirmando = null }) {
+                            Text("Não é mais meu salário", color = Vermelho)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (base > 0) { Salario.confirmar(db, p, base); Bus.bump(); confirmando = null }
+                        else Toast.makeText(ctx, "Digite o valor líquido", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Verde),
+                ) { Text("Confirmar") }
+            },
+            dismissButton = { TextButton(onClick = { confirmando = null }) { Text("Cancelar") } },
+        )
     }
 
     apagar?.let { i ->

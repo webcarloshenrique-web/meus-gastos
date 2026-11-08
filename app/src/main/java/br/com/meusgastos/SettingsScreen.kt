@@ -178,7 +178,9 @@ fun SettingsScreen(db: Db, pad: PaddingValues, go: (Screen) -> Unit) {
                     val ent = Parser.parseIncome("", textoTeste)
                     val p = if (ent == null) Parser.parse("", textoTeste) else null
                     resultado = when {
-                        ent != null -> "💰 Entrada: ${money(ent.cents)} · ${ent.desc}"
+                        ent != null -> "💰 Entrada: ${money(ent.cents)} · ${ent.desc}" +
+                            (if (ent.cnpj.isNotBlank()) " · CNPJ ${ent.cnpj}" else "") +
+                            (if (Salario.pareceSalario(ent)) " · o app vai perguntar se é salário" else "")
                         p == null -> "✖ Não reconheci (pode ser fatura, propaganda ou estorno)."
                         else -> {
                             val c = Categorizer.categorize(db, p.merchant)
