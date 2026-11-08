@@ -46,7 +46,12 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
         db.expenses(range.first, range.second) + if (month > 0) Recorrentes.previstos(db, month) else emptyList()
     }
     val anterior = remember(tick, month) { val r = Dates.range(month - 1); db.expenses(r.first, r.second) }
-    val meses = (month - 4..month).toList()
+    // Janela do gráfico: 3 meses antes e 1 depois, para sempre poder avançar
+    val meses = (month - 3..month + 1).toList()
+    var editando by remember { mutableStateOf<Expense?>(null) }
+    var catSel by remember(month) { mutableStateOf<String?>(null) }
+    var paySel by remember(month) { mutableStateOf<String?>(null) }
+    val listaOrdenada = lista.sortedByDescending { it.dateMs }
     val porMes = remember(tick, month) {
         meses.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) + if (o > 0) Recorrentes.totalPrevisto(db, o) else 0L }
     }
@@ -81,15 +86,15 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
             0 -> item {
                 val comGasto = porMes.filter { it > 0 }
                 val media = if (comGasto.isEmpty()) 0L else comGasto.sum() / comGasto.size
-                val iMaior = porMes.indices.maxByOrNull { porMes[it] } ?: 4
+                val iMaior = porMes.indices.maxByOrNull { porMes[it] } ?: 3
                 AppCard(Modifier.padding(horizontal = 16.dp)) {
                     SectionTitle("Quanto você gastou por mês")
-                    Hint("${Dates.abbr(month - 4)} a ${Dates.abbr(month)} · toque em uma barra para escolher o mês")
+                    Hint("Toque em uma barra: o gráfico anda e mostra o detalhe do mês")
                     BarChart(
                         values = porMes,
                         labels = meses.map { Dates.abbr(it) },
-                        selected = 4,
-                        onSelect = { i -> onMonth(month - 4 + i) },
+                        selected = 3,
+                        onSelect = { i -> onMonth(meses[i]) },
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         StatBox("Média por mês", money(media), Modifier.weight(1f))
@@ -98,6 +103,15 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
                             if (porMes[iMaior] > 0) "${Dates.abbr(meses[iMaior])} · ${compact(porMes[iMaior])}" else "—",
                             Modifier.weight(1f),
                         )
+                    }
+                    DetalheBox {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("🧾 Gastos de ${Dates.full(month)}", Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextoForte)
+                                Text(money(total), fontWeight = FontWeight.Bold, color = Verde)
+                            }
+                            ExpenseListDetail(listaOrdenada, 10) { editando = it }
+                        }
                     }
                 }
             }
@@ -135,6 +149,14 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
                         )
                         StatBox("Dias sem gasto", "$semGasto", Modifier.weight(1f))
                     }
+                    if (diaSel in 0 until dim) {
+                        DetalheBox {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("🧾 Gastos do dia ${diaSel + 1}", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextoForte)
+                                ExpenseListDetail(listaOrdenada.filter { Dates.dayOfMonth(it.dateMs) == diaSel + 1 }, 10) { editando = it }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -149,8 +171,13 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
                             Text(compact(total), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextoForte)
                         }
                     }
-                    if (porCat.isEmpty()) Hint("Ainda não há gastos neste mês.")
-                    porCat.forEach { (cat, v) -> CategoryBarRow(cat, v, total) }
+                    if (porCat.isEmpty()) Hint("Ainda não há gastos neste mês.") else Hint("Toque em uma categoria para ver os gastos dela")
+                    porCat.forEach { (cat, v) ->
+                        CategoryBarRow(cat, v, total, catSel == cat.name) { catSel = if (catSel == cat.name) null else cat.name }
+                        if (catSel == cat.name) {
+                            DetalheBox { Column { ExpenseListDetail(listaOrdenada.filter { Cats.of(it.category).name == cat.name }, 10) { editando = it } } }
+                        }
+                    }
                 }
                 if (lista.isNotEmpty()) {
                     Spacer(Modifier.height(14.dp))
@@ -164,13 +191,23 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
                             StatBox("Compras", compact(total - fixo - parc), Modifier.weight(1f))
                         }
                         SectionTitle("💳 Como você pagou")
+                        Hint("Toque em uma forma de pagamento para ver o demonstrativo")
                         lista.groupBy { it.pay }
                             .map { (p, l) -> p to l.sumOf { it.cents } }
                             .sortedByDescending { it.second }
                             .forEach { (p, v) ->
                                 val nome = if (p.isBlank()) "Não informado" else p
                                 val emoji = if (p.isBlank()) "❔" else Pagamento.emoji(p)
-                                CategoryBarRow(CatInfo(nome, emoji, if (p.isBlank()) Linha else Verde), v, total)
+                                CategoryBarRow(CatInfo(nome, emoji, if (p.isBlank()) Linha else Verde), v, total, paySel == nome) {
+                                    paySel = if (paySel == nome) null else nome
+                                }
+                                if (paySel == nome) {
+                                    DetalheBox {
+                                        Column {
+                                            ExpenseListDetail(listaOrdenada.filter { (if (it.pay.isBlank()) "Não informado" else it.pay) == nome }, 10) { editando = it }
+                                        }
+                                    }
+                                }
                             }
                     }
                 }
@@ -244,7 +281,9 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
             }
         }
     }
+    editando?.let { e -> EditExpenseDialog(db, e) { editando = null } }
 }
+
 
 /** Frases simples explicando o mês: comparação, o que mais pesou, maior gasto, sobra e previsão. */
 fun insights(lista: List<Expense>, prev: List<Expense>, month: Int, saldo: Saldo): List<Pair<String, String>> {

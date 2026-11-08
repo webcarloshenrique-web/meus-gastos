@@ -15,7 +15,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -49,7 +55,8 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
     val lista = if (month > 0) (reais + previstos).sortedByDescending { it.dateMs } else reais
     val listaVisivel = (reais + previstos).sortedByDescending { it.dateMs }
     val prevTotal = remember(tick, month) { val r = Dates.range(month - 1); db.sumBetween(r.first, r.second) }
-    val meses = (month - 4..month).toList()
+    // Janela do gráfico: sempre deixa um mês à frente para avançar
+    val meses = (month - 3..month + 1).toList()
     val last5 = remember(tick, month) {
         meses.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) + if (o > 0) Recorrentes.totalPrevisto(db, o) else 0L }
     }
@@ -58,7 +65,7 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
     val limites = remember(tick) { db.limits() }
     val alertPct = remember(tick) { Prefs.alertPct(ctx) }
     val proximas = remember(tick, month) {
-        (1..3).map { k ->
+        (1..6).map { k ->
             val o = month + k
             val r = Dates.range(o)
             Triple(o, db.sumInstallments(r.first, r.second), Recorrentes.totalPrevisto(db, o))
@@ -70,6 +77,9 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
     val porCatMap = lista.groupBy { it.category }.mapValues { (_, l) -> l.sumOf { it.cents } }
     val porCat = porCatMap.map { (c, v) -> Cats.of(c) to v }.sortedByDescending { it.second }
     var editando by remember { mutableStateOf<Expense?>(null) }
+    var painel by remember { mutableStateOf<String?>(null) }
+    var detalheMes by remember(month) { mutableStateOf<Int?>(null) }
+    val historico = remember(month) { mutableStateListOf<Int>() }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(pad),
@@ -181,39 +191,26 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
             }
         }
 
-        // Limites
+        // Atalhos em ícones (tocar abre o painel)
         item {
-            AppCard(Modifier.padding(horizontal = 16.dp).clickable { go(Screen.LIMITS) }) {
-                if (limites.isEmpty()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("🎯", fontSize = 26.sp)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Defina limites por categoria", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextoForte)
-                            Hint("O app avisa quando você chegar perto do limite.")
-                        }
-                        Text("›", fontSize = 28.sp, color = TextoSuave)
-                    }
-                } else {
-                    SectionTitle("🎯 Limites do mês")
-                    limites.map { (c, lim) -> Triple(c, porCatMap[c] ?: 0L, lim) }
-                        .sortedByDescending { it.second * 100 / it.third }
-                        .forEach { (c, g, lim) ->
-                            val ci = Cats.of(c)
-                            val pct = (g * 100 / lim).toInt()
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("${ci.emoji} ${ci.name}", Modifier.weight(1f), fontSize = 15.sp, color = TextoForte)
-                                    Text(
-                                        "${compact(g)} de ${compact(lim)} · $pct%", fontSize = 13.sp,
-                                        color = if (pct >= 100) Vermelho else if (pct >= alertPct) Laranja else TextoSuave,
-                                        fontWeight = FontWeight.Medium,
-                                    )
-                                }
-                                LimitBar(g, lim, alertPct)
-                            }
-                        }
-                }
+            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                val prox = proximas.firstOrNull()
+                IconTile(
+                    "📆", "Próximos meses",
+                    if (prox != null) "${Dates.abbr(prox.first)} ${compact(prox.second + prox.third)}" else "—",
+                    Modifier.weight(1f), Laranja,
+                ) { painel = "proximos" }
+                val estourados = limites.count { (c, lim) -> (porCatMap[c] ?: 0L) * 100 / lim >= alertPct }
+                IconTile(
+                    "🎯", "Limites",
+                    when {
+                        limites.isEmpty() -> "Definir"
+                        estourados > 0 -> "⚠️ $estourados perto"
+                        else -> "${limites.size} ok"
+                    },
+                    Modifier.weight(1f), if (estourados > 0) Vermelho else Verde,
+                ) { painel = "limites" }
+                IconTile("📅", "Calendário", Dates.abbr(month), Modifier.weight(1f)) { go(Screen.CALENDAR) }
             }
         }
 
@@ -232,25 +229,6 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
                         if (proximos.isNotEmpty()) {
                             Hint("Próximos: " + proximos.joinToString(" · ") { "${it.merchant} dia ${it.day} (${compact(it.cents)})" })
                         }
-                    }
-                }
-            }
-        }
-
-        // Parcelas futuras
-        if (proximas.isNotEmpty()) {
-            item {
-                AppCard(Modifier.padding(horizontal = 16.dp)) {
-                    SectionTitle("📆 Próximos meses")
-                    Hint("O que já está comprometido: parcelas + gastos fixos previstos. Toque para abrir o mês.")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        proximas.forEach { (o, parc, fix) ->
-                            StatBox(Dates.abbr(o), compact(parc + fix), Modifier.weight(1f).clickable { onMonth(o) }, Laranja)
-                        }
-                        repeat(3 - proximas.size) { Spacer(Modifier.weight(1f)) }
-                    }
-                    proximas.firstOrNull()?.let { (o, parc, fix) ->
-                        Hint("${Dates.abbr(o)}: 💳 parcelas ${compact(parc)} · 🔁 fixos ${compact(fix)}")
                     }
                 }
             }
@@ -287,34 +265,105 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
         }
 
         item {
-            AppCard(Modifier.padding(horizontal = 16.dp)) {
-                SectionTitle("📊 Últimos 5 meses")
-                Hint("Toque em uma barra para ver aquele mês")
+            val aberto = detalheMes
+            AppCard(
+                Modifier.padding(horizontal = 16.dp)
+                    .then(if (aberto != null) Modifier.border(2.dp, Verde, RoundedCornerShape(20.dp)) else Modifier)
+            ) {
+                SectionTitle("📊 Gastos por mês")
+                Hint(if (aberto == null) "Toque em uma barra para ver o detalhe do mês" else "Toque em outra barra para comparar")
                 BarChart(
                     values = last5,
                     labels = meses.map { Dates.abbr(it) },
-                    selected = 4,
-                    onSelect = { i -> onMonth(month - 4 + i) },
-                    chartHeight = 110.dp,
+                    selected = meses.indexOf(aberto ?: month),
+                    onSelect = { i ->
+                        val o = meses[i]
+                        if (aberto != null && aberto != o) historico.add(aberto)
+                        detalheMes = o
+                    },
+                    chartHeight = if (aberto != null) 170.dp else 110.dp,
                 )
-            }
-        }
-
-        if (listaVisivel.isNotEmpty()) {
-            item {
-                AppCard(Modifier.padding(horizontal = 16.dp)) {
-                    SectionTitle(if (month > 0) "📆 Previsto para este mês" else "🕒 Gastos do mês")
-                    Hint(if (previstos.isNotEmpty()) "⏳ previsto = gasto fixo que ainda vai vencer (toque para ver os fixos)" else "Toque em um gasto para corrigir ou apagar")
-                    listaVisivel.take(if (month > 0) 15 else 8 + previstos.size).forEach { e ->
-                        ExpenseItem(e) { if (e.source == Recorrentes.PREVISTO) go(Screen.FIXED) else editando = e }
-                    }
-                    if (listaVisivel.size > 8 + previstos.size) {
-                        TextButton(onClick = { go(Screen.CALENDAR) }) { Text("Ver todos no calendário ›", fontSize = 15.sp) }
+                if (aberto != null) {
+                    DetalheBox { MonthDetail(db, aberto) { editando = it } }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { detalheMes = historico.removeLastOrNull() },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("◀ Voltar") }
+                        OutlinedButton(onClick = { onMonth(aberto); detalheMes = null; historico.clear() }, modifier = Modifier.weight(1f)) {
+                            Text("Abrir mês")
+                        }
+                        Button(
+                            onClick = { detalheMes = null; historico.clear() },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = Verde),
+                        ) { Text("✕ Fechar") }
                     }
                 }
             }
         }
+
     }
 
     editando?.let { e -> EditExpenseDialog(db, e) { editando = null } }
+
+    when (painel) {
+        "proximos" -> AlertDialog(
+            onDismissRequest = { painel = null },
+            title = { Text("📆 Próximos meses") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Hint("O que já está comprometido: parcelas + gastos fixos previstos. Toque em um mês para abrir.")
+                    if (proximas.isEmpty()) Hint("Nada marcado para os próximos meses.")
+                    proximas.forEach { (o, parc, fix) ->
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Fundo)
+                                .clickable { onMonth(o); painel = null }.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(Dates.full(o), fontWeight = FontWeight.Bold, color = TextoForte)
+                                Hint("💳 parcelas ${compact(parc)} · 🔁 fixos ${compact(fix)}")
+                            }
+                            Text(compact(parc + fix), fontWeight = FontWeight.Bold, color = Laranja, fontSize = 16.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { painel = null }) { Text("Fechar") } },
+        )
+        "limites" -> AlertDialog(
+            onDismissRequest = { painel = null },
+            title = { Text("🎯 Limites do mês") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (limites.isEmpty()) Hint("Você ainda não definiu limites. O app avisa quando você chegar perto do limite de uma categoria.")
+                    limites.map { (c, lim) -> Triple(c, porCatMap[c] ?: 0L, lim) }
+                        .sortedByDescending { it.second * 100 / it.third }
+                        .forEach { (c, g, lim) ->
+                            val ci = Cats.of(c)
+                            val pct = (g * 100 / lim).toInt()
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("${ci.emoji} ${ci.name}", Modifier.weight(1f), fontSize = 15.sp, color = TextoForte)
+                                    Text(
+                                        "${compact(g)} de ${compact(lim)} · $pct%", fontSize = 13.sp,
+                                        color = if (pct >= 100) Vermelho else if (pct >= alertPct) Laranja else TextoSuave,
+                                        fontWeight = FontWeight.Medium,
+                                    )
+                                }
+                                LimitBar(g, lim, alertPct)
+                            }
+                        }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { painel = null; go(Screen.LIMITS) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Verde),
+                ) { Text(if (limites.isEmpty()) "Definir limites" else "Editar limites") }
+            },
+            dismissButton = { TextButton(onClick = { painel = null }) { Text("Fechar") } },
+        )
+    }
 }

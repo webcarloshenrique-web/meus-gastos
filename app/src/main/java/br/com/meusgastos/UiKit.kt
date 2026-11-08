@@ -415,10 +415,16 @@ fun Donut(slices: List<Pair<Color, Float>>, diameter: Dp = 150.dp, thickness: Dp
 }
 
 @Composable
-fun CategoryBarRow(cat: CatInfo, value: Long, total: Long) {
+fun CategoryBarRow(cat: CatInfo, value: Long, total: Long, selected: Boolean = false, onClick: (() -> Unit)? = null) {
     val frac = if (total > 0) value.toFloat() / total else 0f
     val anim by animateFloatAsState(targetValue = frac, label = "categoria")
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+            .background(if (selected) cat.color.copy(alpha = 0.12f) else Color.Transparent)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(vertical = 4.dp, horizontal = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         CatIcon(cat, 38.dp)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {

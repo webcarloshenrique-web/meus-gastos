@@ -170,10 +170,10 @@ fun App(start: Screen) {
                         )
                     }
                     Spacer(Modifier.height(10.dp))
-                    listOf(Screen.HOME, Screen.ADD, Screen.INCOME, Screen.FIXED, Screen.PENDING, Screen.CALENDAR, Screen.REPORTS, Screen.BACKUP, Screen.IMPORT)
+                    listOf(Screen.HOME, Screen.INCOME, Screen.FIXED, Screen.PENDING, Screen.CALENDAR, Screen.REPORTS)
                         .forEach { s -> DrawerItem(s, screen == s, if (s == Screen.PENDING) pendentes else 0) { go(s) } }
                     HorizontalDivider(Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-                    listOf(Screen.LIMITS, Screen.CATEGORIES, Screen.SETTINGS)
+                    listOf(Screen.LIMITS, Screen.CATEGORIES, Screen.SETTINGS, Screen.BACKUP, Screen.IMPORT)
                         .forEach { s -> DrawerItem(s, screen == s, 0) { go(s) } }
                     Spacer(Modifier.height(16.dp))
                 }
