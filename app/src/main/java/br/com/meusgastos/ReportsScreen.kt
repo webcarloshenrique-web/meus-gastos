@@ -18,6 +18,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -51,6 +55,8 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
     var editando by remember { mutableStateOf<Expense?>(null) }
     var catSel by remember(month) { mutableStateOf<String?>(null) }
     var paySel by remember(month) { mutableStateOf<String?>(null) }
+    var cardSel by remember(month) { mutableStateOf<String?>(null) }
+    var renomear by remember { mutableStateOf<String?>(null) }
     val listaOrdenada = lista.sortedByDescending { it.dateMs }
     val porMes = remember(tick, month) {
         meses.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) + if (o > 0) Recorrentes.totalPrevisto(db, o) else 0L }
@@ -190,6 +196,33 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
                             StatBox("Parcelas", compact(parc), Modifier.weight(1f))
                             StatBox("Compras", compact(total - fixo - parc), Modifier.weight(1f))
                         }
+                        val porCartao = lista.filter { it.card.isNotBlank() }.groupBy { it.card }
+                            .map { (c, l) -> c to l.sumOf { it.cents } }.sortedByDescending { it.second }
+                        if (porCartao.isNotEmpty()) {
+                            val somaCartoes = porCartao.sumOf { it.second }
+                            SectionTitle("💳 Por cartão")
+                            Hint("Toque em um cartão para ver o que foi gasto nele")
+                            val cores = listOf(Verde, Laranja, Color(0xFF7E57C2), Color(0xFF00897B), Color(0xFFD81B60), Color(0xFF5D4037))
+                            porCartao.forEachIndexed { i, (c, v) ->
+                                CategoryBarRow(CatInfo(c, "💳", cores[i % cores.size]), v, somaCartoes, cardSel == c) {
+                                    cardSel = if (cardSel == c) null else c
+                                }
+                                if (cardSel == c) {
+                                    DetalheBox {
+                                        Column {
+                                            ExpenseListDetail(listaOrdenada.filter { it.card == c }, 10) { editando = it }
+                                            TextButton(onClick = { renomear = c }) { Text("✏️ Dar um apelido para este cartão") }
+                                        }
+                                    }
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Somatório dos cartões", Modifier.weight(1f), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextoForte)
+                                Text(money(somaCartoes), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Verde)
+                            }
+                            val semCartao = lista.filter { it.card.isBlank() && it.pay == "Crédito" }.sumOf { it.cents }
+                            if (semCartao > 0) Hint("Mais ${money(semCartao)} no crédito sem cartão identificado.")
+                        }
                         SectionTitle("💳 Como você pagou")
                         Hint("Toque em uma forma de pagamento para ver o demonstrativo")
                         lista.groupBy { it.pay }
@@ -282,6 +315,26 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
         }
     }
     editando?.let { e -> EditExpenseDialog(db, e) { editando = null } }
+    renomear?.let { antigo ->
+        var nome by remember(antigo) { mutableStateOf(antigo) }
+        AlertDialog(
+            onDismissRequest = { renomear = null },
+            title = { Text("Apelido do cartão") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Hint("Ex.: \"BB Platinum •2332\" ou \"Cartão da casa\". Muda em todos os gastos deste cartão.")
+                    OutlinedTextField(value = nome, onValueChange = { nome = it.take(30) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (nome.isNotBlank()) { db.renameCard(antigo, nome.trim()); cardSel = nome.trim(); Bus.bump() }
+                    renomear = null
+                }) { Text("Salvar") }
+            },
+            dismissButton = { TextButton(onClick = { renomear = null }) { Text("Cancelar") } },
+        )
+    }
 }
 
 
@@ -336,6 +389,11 @@ fun insights(lista: List<Expense>, prev: List<Expense>, month: Int, saldo: Saldo
     val fixos = lista.filter { it.fixedId > 0 }.sumOf { it.cents }
     if (fixos > 0) {
         out.add("🔁" to "Gastos fixos (contas do mês) somam ${money(fixos)}: ${(fixos * 100.0 / total).roundToInt()}% do que você gastou.")
+    }
+    val porCartao = lista.filter { it.card.isNotBlank() }.groupBy { it.card }.mapValues { (_, l) -> l.sumOf { it.cents } }
+    if (porCartao.size >= 2) {
+        val (c, v) = porCartao.maxByOrNull { it.value }!!
+        out.add("💳" to "Cartão com mais gastos: $c (${money(v)} de ${money(porCartao.values.sum())} nos cartões).")
     }
     val credito = lista.filter { it.pay == "Crédito" }.sumOf { it.cents }
     if (credito > 0) {

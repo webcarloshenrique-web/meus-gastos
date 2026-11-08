@@ -22,6 +22,8 @@ data class Expense(
     val instTotal: Int = 0,
     val pay: String = "",
     val fixedId: Long = 0,
+    /** Cartão usado, ex.: "Banco do Brasil •2332" (vazio = não informado). */
+    val card: String = "",
 )
 
 /** Gasto fixo: repete todo mês no dia [day]. lastYm = último mês já lançado (ano*12+mês). */
@@ -58,7 +60,7 @@ data class LogEntry(val id: Long, val pkg: String, val text: String, val dateMs:
  * Banco de dados local (fica só no celular).
  * Regra de segurança: só apaga um gasto quando VOCÊ toca em "Apagar".
  */
-class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", null, 4) {
+class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", null, 5) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -75,6 +77,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         createV2(db)
         createV3(db)
         createV4(db)
+        createV5(db)
     }
 
     /** Atualização da versão 1 para a 2: nada é apagado, só são adicionadas colunas e tabelas. */
@@ -91,6 +94,11 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
             createV3(db)
         }
         if (oldVersion < 4) createV4(db)
+        if (oldVersion < 5) createV5(db)
+    }
+
+    private fun createV5(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE expenses ADD COLUMN card TEXT NOT NULL DEFAULT ''")
     }
 
     /** Marca de onde veio cada gasto fixo (para poder substituir uma importação). */
@@ -138,6 +146,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         cv.put("inst_total", e.instTotal)
         cv.put("pay", e.pay)
         cv.put("fixed_id", e.fixedId)
+        cv.put("card", e.card)
         return cv
     }
 
@@ -164,6 +173,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
                         instTotal = it.getInt(8),
                         pay = it.getString(9) ?: "",
                         fixedId = it.getLong(10),
+                        card = it.getString(11) ?: "",
                     )
                 )
             }
@@ -171,7 +181,7 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         return out
     }
 
-    private val cols = "id, cents, merchant, category, date_ms, source, plan_id, inst_num, inst_total, pay, fixed_id"
+    private val cols = "id, cents, merchant, category, date_ms, source, plan_id, inst_num, inst_total, pay, fixed_id, card"
 
     fun expenses(fromMs: Long, toMs: Long): List<Expense> = readExpenses(
         readableDatabase.rawQuery(
@@ -246,6 +256,20 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
             "expenses", "merchant = ? AND cents = ? AND inst_total = ? AND inst_total > 1",
             arrayOf(merchant, cents.toString(), total.toString())
         )
+
+    /** Cartões já usados (para escolher rápido). */
+    fun cards(): List<String> {
+        val out = ArrayList<String>()
+        readableDatabase.rawQuery(
+            "SELECT card, COUNT(*) n FROM expenses WHERE card <> '' GROUP BY card ORDER BY n DESC", null
+        ).use { while (it.moveToNext()) out.add(it.getString(0)) }
+        return out
+    }
+
+    /** Dá um apelido para um cartão (muda em todos os gastos dele). */
+    fun renameCard(old: String, new: String) {
+        writableDatabase.execSQL("UPDATE expenses SET card = ? WHERE card = ?", arrayOf<Any>(new, old))
+    }
 
     fun nextPlanId(): Long = sum("SELECT COALESCE(MAX(plan_id), 0) + 1 FROM expenses", arrayOf())
 

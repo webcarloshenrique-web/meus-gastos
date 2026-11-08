@@ -83,6 +83,7 @@ fun AddScreen(db: Db, pad: PaddingValues, inicialFixo: Boolean = false, onSaved:
     var erro by remember { mutableStateOf("") }
     var fixo by remember { mutableStateOf(inicialFixo) }
     var pay by remember { mutableStateOf("") }
+    var card by remember { mutableStateOf("") }
 
     // Parcelamento
     var parcelado by remember { mutableStateOf(false) }
@@ -127,6 +128,10 @@ fun AddScreen(db: Db, pad: PaddingValues, inicialFixo: Boolean = false, onSaved:
         AppCard {
             SectionTitle("💳 Como pagou?")
             PayChips(pay) { pay = it }
+            if (pay == "Crédito" || pay == "Débito" || card.isNotBlank()) {
+                Text("Qual cartão?", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte)
+                CardChooser(db, card) { card = it }
+            }
         }
 
         // Parcelado
@@ -199,17 +204,17 @@ fun AddScreen(db: Db, pad: PaddingValues, inicialFixo: Boolean = false, onSaved:
                 } else {
                     val nome = desc.trim().ifBlank { cat ?: "Gasto" }
                     when {
-                        fixo -> Recorrentes.criar(db, valor, nome, cat, data, pay)
+                        fixo -> Recorrentes.criar(db, valor, nome, cat, data, pay, card = card)
                         parcelado -> Installments.register(
                             db, nome, cat, data, "manual", valorParcela, totalParcelas,
-                            from = parcelaAtual, withPrevious = lancarAnteriores, firstExtra = sobraDivisao, pay = pay,
+                            from = parcelaAtual, withPrevious = lancarAnteriores, firstExtra = sobraDivisao, pay = pay, card = card,
                         )
-                        else -> db.insertExpense(Expense(0, valor, nome, cat, data, "manual", pay = pay))
+                        else -> db.insertExpense(Expense(0, valor, nome, cat, data, "manual", pay = pay, card = card))
                     }
                     Limits.check(ctx, db, cat)
                     Bus.bump()
                     Toast.makeText(ctx, "Gasto salvo! ✅", Toast.LENGTH_SHORT).show()
-                    valor = 0; desc = ""; cat = null; parcelado = false; parcelaAtual = 1; pay = ""; fixo = false
+                    valor = 0; desc = ""; cat = null; parcelado = false; parcelaAtual = 1; pay = ""; card = ""; fixo = false
                     onSaved()
                 }
             },

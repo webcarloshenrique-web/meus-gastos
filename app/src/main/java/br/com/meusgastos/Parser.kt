@@ -14,6 +14,7 @@ data class Parsed(
     val parcelaAtual: Int = 0,
     val firstExtra: Long = 0,
     val pay: String = "",
+    val final4: String = "",
 )
 
 /** Resultado da leitura de uma entrada de dinheiro (Pix recebido, depósito, salário). */
@@ -62,6 +63,16 @@ object Parser {
         """(?i)\s*(?:\.(?=\s|$)|[;,\n]| às | as | - | — | no dia| na data| no cart| no cr[eé]dito| no d[eé]bito| cart[ãa]o| final | aprovad| em \d| dia \d| via | no valor| com valor| \d{1,2}\s*x\b| parcelad| de R\$).*$""",
         RegexOption.DOT_MATCHES_ALL
     )
+
+    // --- final do cartão: "final 2332", "cartão final: 2332", "terminado em 2332", "****2332", "cartão 2332"
+    private val finalRx = Regex(
+        """(?i)(?:\bfinal|terminad[oa] em|cart[ãa]o(?:\s+de\s+cr[ée]dito|\s+de\s+d[ée]bito)?)\s*:?\s*(?:n[º°o.]*\s*)?[*•xX]*\s*(\d{4})(?!\d)"""
+    )
+    private val maskRx = Regex("""(?:\*{2,}|•{2,}|[xX]{4,})\s*(\d{4})(?!\d)""")
+
+    /** Últimos 4 números do cartão citados na notificação (ou ""). */
+    fun finalCartao(text: String): String =
+        finalRx.find(text)?.groupValues?.get(1) ?: maskRx.find(text)?.groupValues?.get(1) ?: ""
 
     private fun cents(s: String): Long? = s.replace(".", "").replace(",", "").toLongOrNull()
 
@@ -119,7 +130,7 @@ object Parser {
             low.contains("saque") -> "Dinheiro"
             else -> ""
         }
-        return Parsed(valor, pretty(merchant), parcelas, atual, extra, pay)
+        return Parsed(valor, pretty(merchant), parcelas, atual, extra, pay, finalCartao(full))
     }
 
     // ------------------------------------------------------------ Entradas

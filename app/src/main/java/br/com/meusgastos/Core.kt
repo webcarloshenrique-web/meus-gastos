@@ -132,10 +132,10 @@ object Installments {
     fun register(
         db: Db, merchant: String, category: String?, dateMs: Long, source: String,
         instCents: Long, total: Int, from: Int = 1, onlyOne: Boolean = false,
-        withPrevious: Boolean = false, firstExtra: Long = 0, pay: String = "",
+        withPrevious: Boolean = false, firstExtra: Long = 0, pay: String = "", card: String = "",
     ): List<Long> {
         if (total <= 1) {
-            return listOf(db.insertExpense(Expense(0, instCents + firstExtra, merchant, category, dateMs, source, pay = pay)))
+            return listOf(db.insertExpense(Expense(0, instCents + firstExtra, merchant, category, dateMs, source, pay = pay, card = card)))
         }
         val planId = db.nextPlanId()
         val start = if (onlyOne) from else if (withPrevious) 1 else from
@@ -144,10 +144,27 @@ object Installments {
         for (k in start..end) {
             val c = Calendar.getInstance().apply { timeInMillis = dateMs; add(Calendar.MONTH, k - from) }
             val valor = if (k == 1) instCents + firstExtra else instCents
-            ids.add(db.insertExpense(Expense(0, valor, merchant, category, c.timeInMillis, source, planId, k, total, pay = pay)))
+            ids.add(db.insertExpense(Expense(0, valor, merchant, category, c.timeInMillis, source, planId, k, total, pay = pay, card = card)))
         }
         return ids
     }
+}
+
+/** Cartões: "Banco do Brasil •2332" = nome do app do banco + final do cartão. */
+object Cartoes {
+    fun nome(ctx: Context, pkg: String, final4: String): String {
+        if (final4.isBlank()) return ""
+        val banco = try {
+            val pm = ctx.packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+        } catch (_: Exception) {
+            ""
+        }
+        return if (banco.isBlank()) "•$final4" else "$banco •$final4"
+    }
+
+    /** "Banco do Brasil •2332" -> "•2332" (versão curta para listas). */
+    fun curto(card: String): String = if (card.contains('•')) "•" + card.substringAfterLast('•') else card
 }
 
 /** Formas de pagamento. */
@@ -199,10 +216,10 @@ object Recorrentes {
     }
 
     /** Cria um gasto fixo e já lança o gasto da data informada. */
-    fun criar(db: Db, cents: Long, merchant: String, category: String?, dateMs: Long, pay: String, source: String = "manual"): Long {
+    fun criar(db: Db, cents: Long, merchant: String, category: String?, dateMs: Long, pay: String, source: String = "manual", card: String = ""): Long {
         val dia = Calendar.getInstance().apply { timeInMillis = dateMs }.get(Calendar.DAY_OF_MONTH)
         val id = db.insertRecurring(Recurring(0, cents, merchant, category, dia, pay, true, dateMs, ym(dateMs), source))
-        db.insertExpense(Expense(0, cents, merchant, category, dateMs, source, pay = pay, fixedId = id))
+        db.insertExpense(Expense(0, cents, merchant, category, dateMs, source, pay = pay, fixedId = id, card = card))
         return id
     }
 
@@ -237,14 +254,14 @@ object Recorrentes {
      * Um pagamento chegou pelo banco. Se for o valor de um gasto fixo deste mês, liga os dois
      * (não conta duas vezes). Retorna true se tratou.
      */
-    fun casarPagamento(db: Db, cents: Long, time: Long, pkg: String, pay: String): Boolean {
+    fun casarPagamento(db: Db, cents: Long, time: Long, pkg: String, pay: String, card: String = ""): Boolean {
         val (a, b) = rangeYm(ym(time))
         db.findAutoFixed(cents, a, b)?.let { e ->
-            db.update(e.copy(source = pkg, pay = if (e.pay.isBlank()) pay else e.pay))
+            db.update(e.copy(source = pkg, pay = if (e.pay.isBlank()) pay else e.pay, card = if (e.card.isBlank()) card else e.card))
             return true
         }
         val r = db.recurring().firstOrNull { it.active && it.cents == cents && it.lastYm < ym(time) } ?: return false
-        db.insertExpense(Expense(0, cents, r.merchant, r.category, time, pkg, pay = if (r.pay.isBlank()) pay else r.pay, fixedId = r.id))
+        db.insertExpense(Expense(0, cents, r.merchant, r.category, time, pkg, pay = if (r.pay.isBlank()) pay else r.pay, fixedId = r.id, card = card))
         db.updateRecurring(r.copy(lastYm = ym(time)))
         return true
     }
@@ -317,7 +334,8 @@ object Processor {
 
         val parsed = Parser.parse(title, text)
         db.insertLog(pkg, full, time, parsed != null)
-        if (parsed != null && parsed.parcelas <= 1 && Recorrentes.casarPagamento(db, parsed.cents, time, pkg, parsed.pay)) {
+        val cartao = if (parsed != null) Cartoes.nome(ctx, pkg, parsed.final4) else ""
+        if (parsed != null && parsed.parcelas <= 1 && Recorrentes.casarPagamento(db, parsed.cents, time, pkg, parsed.pay, cartao)) {
             Bus.bump()
             return
         }
@@ -329,6 +347,7 @@ object Processor {
                 onlyOne = parsed.parcelaAtual > 0,
                 firstExtra = parsed.firstExtra,
                 pay = parsed.pay,
+                card = cartao,
             )
             if (cat == null) Notifier.askCategory(ctx, ids.first(), parsed) else Limits.check(ctx, db, cat)
         }

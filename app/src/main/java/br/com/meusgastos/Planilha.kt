@@ -304,9 +304,9 @@ object Planilha {
     /** Os mesmos cabeçalhos servem para exportar e importar. */
     val CABECALHO = listOf(
         "Tipo", "Data", "Hora", "Descrição", "Categoria", "Valor (R$)",
-        "Parcela atual", "Total de parcelas", "Criar próximas parcelas?", "Forma de pagamento", "Fixo?",
+        "Parcela atual", "Total de parcelas", "Criar próximas parcelas?", "Forma de pagamento", "Fixo?", "Cartão",
     )
-    private val LARGURAS = listOf(10, 12, 8, 30, 18, 14, 13, 17, 24, 19, 8)
+    private val LARGURAS = listOf(10, 12, 8, 30, 18, 14, 13, 17, 24, 19, 8, 22)
 
     private val dF = SimpleDateFormat("dd/MM/yyyy", ptBR)
     private val hF = SimpleDateFormat("HH:mm", ptBR)
@@ -323,7 +323,7 @@ object Planilha {
                 listOf(
                     "Gasto", dF.format(d), hF.format(d), it.merchant, it.category ?: "", Dinheiro(it.cents),
                     if (parc) it.instNum else null, if (parc) it.instTotal else null, if (parc) "Não" else null,
-                    it.pay, if (it.fixedId > 0) "Sim" else "Não",
+                    it.pay, if (it.fixedId > 0) "Sim" else "Não", it.card,
                 )
             )
         }
@@ -392,7 +392,7 @@ object Planilha {
             CABECALHO,
             listOf("Gasto", dia(2), "12:30", "Restaurante do Zé", "Alimentação", Dinheiro(3590), null, null, null, "Débito", "Não"),
             listOf("Gasto", dia(1), "", "Supermercado", "Mercado", Dinheiro(18740), null, null, null, "Pix", "Não"),
-            listOf("Gasto", dia(0), "", "Geladeira (Casas Bahia)", "Casa e contas", Dinheiro(25000), 4, 10, "Sim", "Crédito", "Não"),
+            listOf("Gasto", dia(0), "", "Geladeira (Casas Bahia)", "Casa e contas", Dinheiro(25000), 4, 10, "Sim", "Crédito", "Não", "Banco do Brasil 2332"),
             listOf("Gasto", dia(6), "", "Aluguel", "Casa e contas", Dinheiro(120000), null, null, null, "Boleto", "Sim"),
             listOf("Entrada", dia(5), "", "Salário da empresa", "Salário", Dinheiro(320000), null, null, null),
             listOf("Entrada", dia(3), "", "Pix da Maria", "Pix recebido", Dinheiro(5000), null, null, null),
@@ -411,6 +411,7 @@ object Planilha {
             listOf("Criar próximas parcelas?", "Sim = o app cria sozinho as parcelas que faltam nos próximos meses. Não = lança só esta linha."),
             listOf("Forma de pagamento", "Opcional: Crédito, Débito, Pix, Dinheiro ou Boleto."),
             listOf("Fixo?", "Sim = conta que repete todo mês (aluguel, internet…). O app passa a lançar sozinho no mesmo dia, todo mês."),
+            listOf("Cartão", "Opcional: banco e final do cartão. Ex.: Banco do Brasil 2332 ou Nubank 7592."),
             listOf("", ""),
             listOf("Dicas", ""),
             listOf("1", "Apague as linhas de exemplo antes de importar (ou mantenha, se quiser testar)."),
@@ -485,6 +486,7 @@ object Planilha {
                 h.startsWith("criar") || h.startsWith("gerar") -> "criar"
                 h.startsWith("forma") || h.startsWith("pagamento") || h.startsWith("meio") -> "pay"
                 h.startsWith("fixo") || h.startsWith("recorrente") -> "fixo"
+                h.startsWith("cartao") -> "card"
                 else -> null
             }
             if (k != null && !m.containsKey(k)) m[k] = i
@@ -647,6 +649,14 @@ object Planilha {
                 }
             }
             val pay = Pagamento.normalizar(cel("pay"))
+            val card = cel("card").let { c ->
+                val dig = Regex("""(\d{4})\s*$""").find(c)?.groupValues?.get(1)
+                when {
+                    c.isBlank() -> ""
+                    c.contains('•') || dig == null -> c
+                    else -> c.removeSuffix(dig).trim().removeSuffix("final").trim().let { b -> if (b.isBlank()) "•$dig" else "$b •$dig" }
+                }
+            }
 
             // Parcelas: aceita "4" e "10" em colunas separadas, ou "4/10" numa coluna só
             var atual = cel("atual").substringBefore('.').toIntOrNull() ?: 0
@@ -665,7 +675,7 @@ object Planilha {
                 // Se isso der muito no futuro, entende a data como o pagamento da parcela atual.
                 val naParcelaAtual = Calendar.getInstance().apply { timeInMillis = data; add(Calendar.MONTH, atual - 1) }.timeInMillis
                 val base = if (naParcelaAtual <= System.currentTimeMillis() + 31L * Dates.DAY_MS) naParcelaAtual else data
-                Installments.register(db, desc, categoria, base, fonte, valor, total, from = atual, pay = pay)
+                Installments.register(db, desc, categoria, base, fonte, valor, total, from = atual, pay = pay, card = card)
                 gastos++
                 return@forEachIndexed
             }
@@ -677,9 +687,9 @@ object Planilha {
                 val ym = Recorrentes.ym(data)
                 val existente = db.recurring().firstOrNull { n(it.merchant) == n(desc) && it.cents == valor }
                 if (existente == null) {
-                    Recorrentes.criar(db, valor, desc, categoria, data, pay, fonte)
+                    Recorrentes.criar(db, valor, desc, categoria, data, pay, fonte, card)
                 } else {
-                    db.insertExpense(Expense(0, valor, desc, categoria, data, fonte, pay = pay, fixedId = existente.id))
+                    db.insertExpense(Expense(0, valor, desc, categoria, data, fonte, pay = pay, fixedId = existente.id, card = card))
                     if (ym > existente.lastYm) db.updateRecurring(existente.copy(lastYm = ym))
                 }
                 gastos++
@@ -691,10 +701,10 @@ object Planilha {
                 run {
                     val chave = "$desc|$total|$valor"
                     val plano = planos.getOrPut(chave) { db.nextPlanId() }
-                    db.insertExpense(Expense(0, valor, desc, categoria, data, fonte, plano, atual, total, pay = pay))
+                    db.insertExpense(Expense(0, valor, desc, categoria, data, fonte, plano, atual, total, pay = pay, card = card))
                 }
             } else {
-                db.insertExpense(Expense(0, valor, desc, categoria, data, fonte, pay = pay))
+                db.insertExpense(Expense(0, valor, desc, categoria, data, fonte, pay = pay, card = card))
             }
             gastos++
         }

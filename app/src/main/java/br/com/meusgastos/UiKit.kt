@@ -472,7 +472,8 @@ fun ExpenseItem(e: Expense, onClick: () -> Unit) {
                 e.fixedId > 0 -> " · 🔁 fixo"
                 else -> ""
             }
-            val pg = if (e.pay.isNotBlank()) " · ${Pagamento.emoji(e.pay)} ${e.pay}" else ""
+            val pg = (if (e.pay.isNotBlank()) " · ${Pagamento.emoji(e.pay)} ${e.pay}" else "") +
+                (if (e.card.isNotBlank()) " ${Cartoes.curto(e.card)}" else "")
             Text("${cat.name} · ${dayFmt.format(Date(e.dateMs))}$parc$fixo$pg", fontSize = 13.sp, color = TextoSuave, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Text(
@@ -526,6 +527,36 @@ fun PayChips(selected: String, onPick: (String) -> Unit) {
     }
 }
 
+/** Escolher o cartão: os já usados + digitar um novo (ex.: "Nubank 1234"). */
+@Composable
+fun CardChooser(db: Db, selected: String, onPick: (String) -> Unit) {
+    val conhecidos = remember { db.cards() }
+    var novo by remember { mutableStateOf("") }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        (listOf("") + conhecidos).chunked(2).forEach { linha ->
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                linha.forEach { c ->
+                    Chip(if (c.isBlank()) "Nenhum" else "💳 $c", selected == c, Modifier.weight(1f)) { onPick(c) }
+                }
+                if (linha.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+        OutlinedTextField(
+            value = novo,
+            onValueChange = { v ->
+                novo = v
+                val dig = Regex("""(\d{4})\s*$""").find(v.trim())?.groupValues?.get(1)
+                if (dig != null) {
+                    val banco = v.trim().removeSuffix(dig).trim().removeSuffix("final").trim()
+                    onPick(if (banco.isBlank()) "•$dig" else "$banco •$dig")
+                }
+            },
+            label = { Text("Outro cartão: banco e final (ex.: Nubank 1234)") },
+            singleLine = true, modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
 /** Janela para corrigir um gasto: nome, valor e categoria — ou apagar (uma parcela ou a compra toda). */
 @Composable
 fun EditExpenseDialog(db: Db, e: Expense, onDismiss: () -> Unit) {
@@ -534,6 +565,7 @@ fun EditExpenseDialog(db: Db, e: Expense, onDismiss: () -> Unit) {
     var valor by remember(e.id) { mutableLongStateOf(e.cents) }
     var cat by remember(e.id) { mutableStateOf(e.category) }
     var pay by remember(e.id) { mutableStateOf(e.pay) }
+    var card by remember(e.id) { mutableStateOf(e.card) }
     var confirmarApagar by remember(e.id) { mutableStateOf(false) }
     var erro by remember(e.id) { mutableStateOf("") }
     val parcelado = e.planId > 0 && e.instTotal > 1
@@ -586,6 +618,8 @@ fun EditExpenseDialog(db: Db, e: Expense, onDismiss: () -> Unit) {
                 CategoryGrid(cat) { cat = it }
                 Text("Como pagou?", fontWeight = FontWeight.Medium)
                 PayChips(pay) { pay = it }
+                Text("Cartão", fontWeight = FontWeight.Medium)
+                CardChooser(db, card) { card = it }
                 if (e.fixedId > 0) {
                     val r = remember(e.fixedId) { db.recurring().firstOrNull { it.id == e.fixedId } }
                     if (r != null) {
@@ -606,7 +640,7 @@ fun EditExpenseDialog(db: Db, e: Expense, onDismiss: () -> Unit) {
                     if (valor <= 0) {
                         erro = "Digite o valor"
                     } else {
-                        val upd = e.copy(cents = valor, merchant = nome.trim().ifBlank { e.merchant }, category = cat, pay = pay)
+                        val upd = e.copy(cents = valor, merchant = nome.trim().ifBlank { e.merchant }, category = cat, pay = pay, card = card)
                         db.update(upd)
                         val nova = cat
                         if (nova != null && nova != e.category) Categorizer.learn(db, upd, nova)
