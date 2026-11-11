@@ -47,7 +47,7 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
     val range = remember(month) { Dates.range(month) }
     // Meses futuros: inclui os gastos fixos previstos (⏳), junto com as parcelas.
     val lista = remember(tick, month) {
-        db.expenses(range.first, range.second) + if (month > 0) Recorrentes.previstos(db, month) else emptyList()
+        db.expenses(range.first, range.second) + if (month >= 0) Recorrentes.previstos(db, month) else emptyList()
     }
     val anterior = remember(tick, month) { val r = Dates.range(month - 1); db.expenses(r.first, r.second) }
     // Janela do gráfico: 3 meses antes e 1 depois, para sempre poder avançar
@@ -59,7 +59,7 @@ fun ReportsScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit
     var renomear by remember { mutableStateOf<String?>(null) }
     val listaOrdenada = lista.sortedByDescending { it.dateMs }
     val porMes = remember(tick, month) {
-        meses.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) + if (o > 0) Recorrentes.totalPrevisto(db, o) else 0L }
+        meses.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) + if (o >= 0) Recorrentes.totalPrevisto(db, o) else 0L }
     }
     val entradasMes = remember(tick, month) { meses.map { o -> db.sumIncomeMonth(Recorrentes.ym(Dates.range(o).first)) } }
     val saldo = remember(tick, month) { Budget.saldo(db, month) }

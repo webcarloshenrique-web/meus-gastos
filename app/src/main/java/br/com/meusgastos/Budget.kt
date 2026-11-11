@@ -11,7 +11,11 @@ data class Saldo(
     val estimada: Boolean,
     val projecaoGasto: Long?,
     val porDia: Long?,
+    /** Parte de [saiu] que ainda vai vencer no mês (gastos fixos previstos). */
+    val aVencer: Long = 0,
 ) {
+    /** O que já foi efetivamente pago/lançado. */
+    val pago: Long get() = saiu - aVencer
     val sobra: Long get() = renda - saiu
     val sobraPrevista: Long? get() = projecaoGasto?.let { renda - it }
 }
@@ -22,7 +26,10 @@ object Budget {
         // Entradas contam pelo mês que pagam (ex.: salário que cai em novembro paga outubro)
         val ym = Recorrentes.ym(r.first)
         val entrou = db.sumIncomeMonth(ym)
-        val saiu = db.sumBetween(r.first, r.second)
+        // Saiu = tudo o que é do mês, pago ou ainda a vencer (fixos previstos e parcelas)
+        val lancado = db.sumBetween(r.first, r.second)
+        val aVencer = if (month >= 0) Recorrentes.totalPrevisto(db, month) else 0L
+        val saiu = lancado + aVencer
         val anteriores = (1..3).map { db.sumIncomeMonth(ym - it) }.filter { it > 0 }
         val media = if (anteriores.isEmpty()) 0L else anteriores.sum() / anteriores.size
         val renda = if (entrou > 0) entrou else media
@@ -32,11 +39,11 @@ object Budget {
         val fixosLancados = db.sumFixed(r.first, r.second)
         val parcelas = db.sumInstallments(r.first, r.second)
         val fixosMes = Recorrentes.totalMensal(db)
-        val variavel = (saiu - fixosLancados - parcelas).coerceAtLeast(0)
+        val variavel = (lancado - fixosLancados - parcelas).coerceAtLeast(0)
         val projecao = if (month == 0 && hoje >= 3 && saiu > 0) {
-            variavel * dim / hoje + maxOf(fixosMes, fixosLancados) + parcelas
+            variavel * dim / hoje + maxOf(fixosMes, fixosLancados + aVencer) + parcelas
         } else null
         val porDia = if (month == 0 && renda > 0) (renda - saiu) / (dim - hoje + 1).coerceAtLeast(1) else null
-        return Saldo(entrou, saiu, renda, entrou == 0L && media > 0, projecao, porDia)
+        return Saldo(entrou, saiu, renda, entrou == 0L && media > 0, projecao, porDia, aVencer)
     }
 }

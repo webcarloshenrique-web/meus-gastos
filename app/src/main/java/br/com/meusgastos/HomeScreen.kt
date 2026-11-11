@@ -51,14 +51,14 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
     val reais = remember(tick, month) { db.expenses(range.first, range.second) }
     val previstos = remember(tick, month) { Recorrentes.previstos(db, month) }
     val aVencer = previstos.sumOf { it.cents }
-    // Meses futuros: parcelas + fixos previstos, tudo junto. Mês atual: só o que já aconteceu.
-    val lista = if (month > 0) (reais + previstos).sortedByDescending { it.dateMs } else reais
+    // Mês atual e futuros: conta tudo o que é do mês, pago ou a vencer (contabilidade mais certa)
+    val lista = (reais + previstos).sortedByDescending { it.dateMs }
     val listaVisivel = (reais + previstos).sortedByDescending { it.dateMs }
     val prevTotal = remember(tick, month) { val r = Dates.range(month - 1); db.sumBetween(r.first, r.second) }
     // Janela do gráfico: sempre deixa um mês à frente para avançar
     val meses = (month - 3..month + 1).toList()
     val last5 = remember(tick, month) {
-        meses.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) + if (o > 0) Recorrentes.totalPrevisto(db, o) else 0L }
+        meses.map { o -> val r = Dates.range(o); db.sumBetween(r.first, r.second) + if (o >= 0) Recorrentes.totalPrevisto(db, o) else 0L }
     }
     val pendentes = remember(tick) { db.pendingCount() }
     val salarioPendente = remember(tick) { db.payersPending().firstOrNull() }
@@ -98,7 +98,11 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        if (month > 0) "Previsto para ${Dates.full(month)}" else "Gasto em ${Dates.full(month)}",
+                        when {
+                            month > 0 -> "Previsto para ${Dates.full(month)}"
+                            month == 0 && aVencer > 0 -> "Gastos de ${Dates.full(month)} (pagos + a vencer)"
+                            else -> "Gasto em ${Dates.full(month)}"
+                        },
                         color = Color.White.copy(alpha = 0.9f), fontSize = 15.sp,
                     )
                     Text(money(total), color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold)
@@ -114,15 +118,14 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
                             if (parc > 0) Pill("💳 parcelas ${compact(parc)}")
                             if (aVencer > 0) Pill("🔁 fixos ${compact(aVencer)}")
                         } else {
-                            Pill("🧾 ${lista.size} gastos")
+                            Pill("🧾 ${reais.size} gastos")
                         }
                     }
                     if (month == 0 && aVencer > 0) {
-                        Pill("⏳ + ${money(aVencer)} em fixos que ainda vão vencer")
-                        Text(
-                            "Total do mês com os fixos: ${money(total + aVencer)}",
-                            color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold,
-                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Pill("✅ já pago ${compact(total - aVencer)}")
+                            Pill("⏳ a vencer ${compact(aVencer)}")
+                        }
                     }
                     saldo.projecaoGasto?.let { Pill("🔮 Previsão de gastos: ${money(it)}") }
                 }
@@ -134,11 +137,14 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
             item {
                 AppCard(Modifier.padding(horizontal = 16.dp)) {
                     if (saldo.renda > 0) {
-                        SectionTitle("💰 Quanto sobra")
+                        SectionTitle("💰 Quanto ainda tenho")
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             StatBox(if (saldo.estimada) "Entrada (estim.)" else "Entrou", compact(saldo.renda), Modifier.weight(1f), VerdeOk)
-                            StatBox("Saiu", compact(saldo.saiu), Modifier.weight(1f), Vermelho)
-                            StatBox("Sobra", compact(saldo.sobra), Modifier.weight(1f), if (saldo.sobra >= 0) VerdeOk else Vermelho)
+                            StatBox(if (saldo.aVencer > 0) "Gastos (+a vencer)" else "Saiu", compact(saldo.saiu), Modifier.weight(1f), Vermelho)
+                            StatBox("Disponível", compact(saldo.sobra), Modifier.weight(1f), if (saldo.sobra >= 0) VerdeOk else Vermelho)
+                        }
+                        if (saldo.aVencer > 0) {
+                            Hint("Já desconta ${money(saldo.aVencer)} de contas fixas que ainda vão vencer neste mês.")
                         }
                         saldo.sobraPrevista?.let { prev ->
                             Text(

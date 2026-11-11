@@ -290,7 +290,7 @@ fun MonthStrip(db: Db, selected: Int, onSelect: (Int) -> Unit) {
     val totais = remember(tick) {
         offsets.map { o ->
             val r = Dates.range(o)
-            db.sumBetween(r.first, r.second) + if (o > 0) Recorrentes.totalPrevisto(db, o) else 0L
+            db.sumBetween(r.first, r.second) + if (o >= 0) Recorrentes.totalPrevisto(db, o) else 0L
         }
     }
     val idx = selected - MIN_MONTH

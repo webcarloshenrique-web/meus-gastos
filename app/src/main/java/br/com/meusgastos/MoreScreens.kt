@@ -102,8 +102,8 @@ fun IncomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit)
                 SectionTitle("💰 ${Dates.full(month)}")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatBox("Entrou", compact(saldo.entrou), Modifier.weight(1f), VerdeOk)
-                    StatBox("Saiu", compact(saldo.saiu), Modifier.weight(1f), Vermelho)
-                    StatBox("Sobra", compact(saldo.entrou - saldo.saiu), Modifier.weight(1f), if (saldo.entrou - saldo.saiu >= 0) VerdeOk else Vermelho)
+                    StatBox(if (saldo.aVencer > 0) "Saiu (+a vencer)" else "Saiu", compact(saldo.saiu), Modifier.weight(1f), Vermelho)
+                    StatBox("Disponível", compact(saldo.entrou - saldo.saiu), Modifier.weight(1f), if (saldo.entrou - saldo.saiu >= 0) VerdeOk else Vermelho)
                 }
                 saldo.sobraPrevista?.let { s ->
                     if (saldo.renda > 0) Text(
