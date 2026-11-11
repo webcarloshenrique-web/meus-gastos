@@ -186,6 +186,8 @@ fun App(start: Screen) {
                     title = screen.title,
                     onMenu = { scope.launch { if (drawer.isOpen) drawer.close() else drawer.open() } },
                     onSettings = { screen = Screen.SETTINGS },
+                    subtitle = if (screen in listOf(Screen.HOME, Screen.REPORTS, Screen.CALENDAR, Screen.INCOME)) Dates.full(month) else "",
+                    badge = pendentes,
                 )
             },
             floatingActionButton = {
@@ -201,7 +203,8 @@ fun App(start: Screen) {
             },
             containerColor = Fundo,
         ) { pad ->
-            when (screen) {
+            androidx.compose.animation.Crossfade(targetState = screen, label = "tela") { tela ->
+            when (tela) {
                 Screen.HOME -> HomeScreen(db, pad, month, setMonth) { go(it) }
                 Screen.ADD -> AddScreen(db, pad, addFixo) { addFixo = false; screen = Screen.HOME }
                 Screen.FIXED -> FixedScreen(db, pad) { addFixo = true; screen = Screen.ADD }
@@ -214,6 +217,7 @@ fun App(start: Screen) {
                 Screen.LIMITS -> LimitsScreen(db, pad)
                 Screen.CATEGORIES -> CategoriesScreen(db, pad)
                 Screen.SETTINGS -> SettingsScreen(db, pad) { go(it) }
+            }
             }
         }
     }
@@ -232,7 +236,7 @@ fun DrawerItem(s: Screen, selected: Boolean, badge: Int, onClick: () -> Unit) {
 }
 
 @Composable
-fun TopBar(title: String, onMenu: () -> Unit, onSettings: () -> Unit) {
+fun TopBar(title: String, onMenu: () -> Unit, onSettings: () -> Unit, subtitle: String = "", badge: Int = 0) {
     Box(
         Modifier.fillMaxWidth()
             .background(Brush.horizontalGradient(listOf(Verde, VerdeClaro)))
@@ -243,12 +247,14 @@ fun TopBar(title: String, onMenu: () -> Unit, onSettings: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onMenu) {
-                Icon(Icons.Filled.Menu, contentDescription = "Abrir menu", tint = Color.White)
+                androidx.compose.material3.BadgedBox(badge = { if (badge > 0) Badge { Text("$badge") } }) {
+                    Icon(Icons.Filled.Menu, contentDescription = "Abrir menu", tint = Color.White)
+                }
             }
-            Text(
-                title, Modifier.weight(1f), color = Color.White, fontSize = 20.sp,
-                fontWeight = FontWeight.Bold, maxLines = 1,
-            )
+            Column(Modifier.weight(1f)) {
+                Text(title, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                if (subtitle.isNotBlank()) Text(subtitle, color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp, maxLines = 1)
+            }
             IconButton(onClick = onSettings) {
                 Icon(Icons.Filled.Settings, contentDescription = "Ajustes", tint = Color.White)
             }

@@ -72,6 +72,9 @@ data class Payer(
 /** Categoria (as padrão e as que você criar). color = ARGB, ex.: 0xFFF4A261 */
 data class Category(val name: String, val emoji: String, val color: Long, val pos: Int)
 
+/** Sugestão de preenchimento a partir do histórico. */
+data class Sugestao(val merchant: String, val category: String?, val pay: String, val card: String)
+
 /** Texto de notificação recebido (para conferência e melhoria do leitor). */
 data class LogEntry(val id: Long, val pkg: String, val text: String, val dateMs: Long, val parsed: Boolean)
 
@@ -635,6 +638,27 @@ class Db private constructor(ctx: Context) : SQLiteOpenHelper(ctx, "gastos.db", 
         writableDatabase.execSQL(
             "DELETE FROM raw_log WHERE id NOT IN (SELECT id FROM raw_log ORDER BY id DESC LIMIT 200)"
         )
+    }
+
+    /** Esta notificação já foi lida? (evita ler duas vezes a mesma) */
+    fun logExists(pkg: String, dateMs: Long, text: String): Boolean = sum(
+        "SELECT COUNT(*) FROM raw_log WHERE pkg = ? AND date_ms = ? AND text = ?", arrayOf(pkg, dateMs.toString(), text)
+    ) > 0
+
+    /** Lugares onde você mais gasta (para preencher rápido um novo gasto). */
+    fun suggestions(prefix: String, limit: Int): List<Sugestao> {
+        val out = ArrayList<Sugestao>()
+        val p = prefix.trim()
+        readableDatabase.rawQuery(
+            "SELECT merchant, category, pay, card, COUNT(*) AS n, MAX(date_ms) FROM expenses " +
+                "WHERE source NOT IN ('fixo', 'previsto') AND merchant LIKE ? GROUP BY merchant ORDER BY n DESC, MAX(date_ms) DESC LIMIT $limit",
+            arrayOf("%$p%")
+        ).use {
+            while (it.moveToNext()) {
+                out.add(Sugestao(it.getString(0), if (it.isNull(1)) null else it.getString(1), it.getString(2) ?: "", it.getString(3) ?: ""))
+            }
+        }
+        return out
     }
 
     fun logs(limit: Int): List<LogEntry> {

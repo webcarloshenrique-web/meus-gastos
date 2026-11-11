@@ -106,6 +106,16 @@ fun HomeScreen(db: Db, pad: PaddingValues, month: Int, onMonth: (Int) -> Unit, g
                         color = Color.White.copy(alpha = 0.9f), fontSize = 15.sp,
                     )
                     Text(money(total), color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Bold)
+                    if (month <= 0 && saldo.renda > 0) {
+                        val usado = (total.toFloat() / saldo.renda).coerceIn(0f, 1f)
+                        Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = 0.25f))) {
+                            Box(Modifier.fillMaxWidth(usado).height(8.dp).clip(RoundedCornerShape(50)).background(Color.White))
+                        }
+                        Text(
+                            "${(total * 100 / saldo.renda)}% da entrada" + (if (saldo.estimada) " estimada" else "") + " de ${money(saldo.renda)}",
+                            color = Color.White.copy(alpha = 0.9f), fontSize = 13.sp,
+                        )
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (prevTotal > 0 && month <= 0) {
                             val diff = total - prevTotal

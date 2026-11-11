@@ -92,6 +92,7 @@ fun SettingsScreen(db: Db, pad: PaddingValues, go: (Screen) -> Unit) {
     var textoTeste by remember { mutableStateOf("Compra de R$ 25,90 APROVADA em IFOOD") }
     var resultado by remember { mutableStateOf<String?>(null) }
     var autoEntrada by remember { mutableStateOf(Prefs.autoIncome(ctx)) }
+    var avisarLido by remember { mutableStateOf(Prefs.confirmRead(ctx)) }
     var statusAtualizacao by remember { mutableStateOf("") }
 
     LazyColumn(
@@ -243,6 +244,17 @@ fun SettingsScreen(db: Db, pad: PaddingValues, go: (Screen) -> Unit) {
                         Hint("Registrar sozinho Pix recebido, depósito e salário avisados pelo banco.")
                     }
                     Switch(checked = autoEntrada, onCheckedChange = { autoEntrada = it; Prefs.setAutoIncome(ctx, it) })
+                }
+            }
+        }
+        item {
+            AppCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        SectionTitle("🔔 Avisar o que foi lido")
+                        Hint("Mostra um aviso discreto (sem som) a cada gasto ou entrada que o app registrar sozinho.")
+                    }
+                    Switch(checked = avisarLido, onCheckedChange = { avisarLido = it; Prefs.setConfirmRead(ctx, it) })
                 }
             }
         }

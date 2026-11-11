@@ -91,10 +91,10 @@ object Tema {
 /** Cor principal (segue a paleta escolhida em Ajustes). */
 val Verde: Color get() = Tema.atual.primary
 val VerdeClaro: Color get() = Tema.atual.light
-val Fundo = Color(0xFFF3F6F4)
-val TextoForte = Color(0xFF17231F)
-val TextoSuave = Color(0xFF5F6F68)
-val Linha = Color(0xFFE1E8E4)
+val Fundo = Color(0xFFF4F6F8)
+val TextoForte = Color(0xFF16202A)
+val TextoSuave = Color(0xFF5E6B78)
+val Linha = Color(0xFFE3E7EC)
 val Vermelho = Color(0xFFC62828)
 val Laranja = Color(0xFFE08A00)
 val VerdeOk = Color(0xFF2E9E5B)
@@ -130,7 +130,8 @@ fun AppCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Linha),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
     }
@@ -138,7 +139,7 @@ fun AppCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -
 
 @Composable
 fun SectionTitle(text: String) {
-    Text(text, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextoForte)
+    Text(text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = TextoForte, letterSpacing = 0.1.sp)
 }
 
 @Composable

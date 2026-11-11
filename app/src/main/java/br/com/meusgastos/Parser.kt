@@ -40,23 +40,30 @@ data class ParsedIncome(
  */
 object Parser {
 
-    private const val MONEY = """[0-9]{1,3}(?:\.[0-9]{3})+,[0-9]{2}|[0-9]+,[0-9]{2}"""
+    // Aceita 1.234,56 · 25,90 · 25.90 · 5.000 · 25
+    private const val MONEY = """[0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]{2})?|[0-9]+[.,][0-9]{2}(?![0-9])|[0-9]+"""
     private val money = Regex("""R\$\s*($MONEY)""")
 
     /** Palavras que indicam que é um GASTO. */
     private val spendWords = listOf(
-        "compra", "pagamento", "pix enviado", "voce enviou", "você enviou", "enviou",
-        "debito", "débito", "saque", "transferencia enviada", "transferência enviada",
-        "pagou", "pix realizado", "pix feito", "transferencia realizada", "transferência realizada",
-        "parcela",
+        "compra", "pagamento", "pix enviado", "enviou", "transferiu", "debito", "débito", "debitad", "saque",
+        "transferencia enviada", "transferência enviada", "transferencia realizada", "transferência realizada",
+        "ted enviad", "doc enviad", "pagou", "pix realizado", "pix feito", "parcela", "boleto pago", "conta paga",
+        "recarga", "tarifa", "anuidade", "assinatura", "transação", "transacao", "gastou",
     )
 
-    /** Palavras que indicam que NÃO é gasto (entrada de dinheiro, estorno, propaganda, fatura). */
-    private val skipWords = listOf(
-        "recebeu", "recebido", "recebida", "estorno", "estornad", "deposito", "depósito",
-        "reembolso", "cashback", "fatura", "emprestimo", "empréstimo", "oferta", "cancelad",
-        "negad", "recusad", "não aprovad", "nao aprovad", "limite disponível", "limite disponivel",
+    /** Avisos que NÃO são movimentação: propaganda, tentativa que falhou, lembrete, estorno, fatura. */
+    private val noise = listOf(
+        "fatura", "emprestimo", "empréstimo", "oferta", "agendad", "cancelad", "negad", "recusad",
+        "não aprovad", "nao aprovad", "não autorizad", "nao autorizad", "não realizad", "nao realizad",
+        "não concluíd", "nao concluid", "não foi", "nao foi", "cashback", "estorn", "devolu", "devolvid", "reembols",
+        "vence ", "vence.", "a vencer", "vencendo", "lembrete", "código de verifica", "codigo de verifica", "token",
+        "ganhe", "cupom", "simul", "pré-aprovad", "pre-aprovad", "aproveite", "contrate", "tentativa", "bloquead",
+        "pendente", "aguardando", "saldo insuficiente", "aplicação", "aplicacao", "resgate", "investi",
     )
+
+    /** Palavras de ENTRADA: se aparecerem, não é gasto. */
+    private val incomingHints = listOf("recebeu", "recebid", "deposito", "depósito", "creditad")
 
     // --- parcelas ---
     private val parcelaRx = Regex("""(?i)parcela\s*(\d{1,2})\s*(?:/|de)\s*(\d{1,2})""")
@@ -64,7 +71,14 @@ object Parser {
     private val emVezesRx = Regex("""(?i)(?:\bem\s*|\s)(\d{1,2})\s*(?:x\b|vezes\b|parcelas\b)""")
 
     // --- estabelecimento ---
-    private val afterRx = Regex("""(?i)\b(?:em|no|na|para|p/|a favor de)\s+(?!dia\b|data\b|\d|cart|seu\b|sua\b)(.+)""")
+    private val afterRx = Regex(
+        """(?i)\b(?:em|no|na|para|p/|a favor de|ao|a)\s+(?!dia\b|data\b|\d|cart|seu\b|sua\b|vista\b|prazo\b|partir\b|mais\b|menos\b|cada\b)(.+)"""
+    )
+    /** "Compra aprovada: PADARIA X R$ 20,00" */
+    private val colonRx = Regex("""[:\-–]\s*([^:\-–\n]{2,40}?)\s*[:\-–]?\s*$""")
+    /** "Débito automático de R$ 99,90 realizado - CLARO S.A." */
+    private val trailingRx = Regex("""[-–:]\s+(\p{Lu}[\p{L}\p{N} .&*']{1,38}?)\.?\s*$""")
+    private val genericRx = Regex("""(?i)compra|valor|cart[ãa]o|aprovad|pagamento|pix|d[ée]bito|cr[ée]dito|transa|realizad""")
     private val beforeRx = Regex(
         """(?is)^.*\b(?:em|no|na|para)\s+(?!valor\b|o valor\b|cart|\d)([^.,;\n]+?)(?:\s+(?:no valor|com valor|valor|de|por))*\s*$"""
     )
@@ -84,12 +98,20 @@ object Parser {
     fun finalCartao(text: String): String =
         finalRx.find(text)?.groupValues?.get(1) ?: maskRx.find(text)?.groupValues?.get(1) ?: ""
 
-    private fun cents(s: String): Long? = s.replace(".", "").replace(",", "").toLongOrNull()
+    private val decRx = Regex("""[.,]([0-9]{2})$""")
+
+    private fun cents(s: String): Long? {
+        val t = s.trim()
+        val dec = decRx.find(t)
+        return if (dec != null) (t.dropLast(3).replace(".", "").replace(",", "") + dec.groupValues[1]).toLongOrNull()
+        else t.replace(".", "").toLongOrNull()?.times(100)
+    }
 
     fun parse(title: String, text: String): Parsed? {
         val full = "$title $text".trim()
         val low = full.lowercase()
-        if (skipWords.any { low.contains(it) }) return null
+        if (noise.any { low.contains(it) }) return null
+        if (incomingHints.any { low.contains(it) }) return null
         if (spendWords.none { low.contains(it) }) return null
 
         val m = money.find(full) ?: return null
@@ -130,8 +152,11 @@ object Parser {
         val raw = afterRx.find(after)?.groupValues?.get(1)
             ?: beforeRx.find(before)?.groupValues?.get(1)
             ?: leadingRx.find(after)?.groupValues?.get(1)
+            ?: colonRx.find(before)?.groupValues?.get(1)?.takeIf { !genericRx.containsMatchIn(it) }
+            ?: trailingRx.find(after)?.groupValues?.get(1)?.takeIf { !genericRx.containsMatchIn(it) }
         val cleaned = raw?.replace(cutRx, "")?.trim()
-        val merchant: String = cleaned?.takeIf { it.length >= 2 } ?: title.ifBlank { "Gasto" }
+        val merchant: String = cleaned?.takeIf { it.length >= 2 }
+            ?: (if (low.contains("boleto")) "Boleto" else title.ifBlank { "Gasto" })
         val pay = when {
             parcelas > 1 || low.contains("crédito") || low.contains("credito") -> "Crédito"
             low.contains("débito") || low.contains("debito") -> "Débito"
@@ -147,12 +172,21 @@ object Parser {
 
     private val incomeWords = listOf(
         "pix recebido", "você recebeu", "voce recebeu", "recebeu um pix", "recebeu uma transfer",
-        "transferência recebida", "transferencia recebida", "depósito", "deposito", "salário", "salario",
-        "crédito em conta", "credito em conta", "recebimento de",
+        "transferência recebida", "transferencia recebida", "ted recebid", "doc recebid", "pagamento recebido",
+        "depósito", "deposito", "salário", "salario", "crédito em conta", "credito em conta", "creditad",
+        "recebimento de", "te enviou", "enviou para você", "enviou para voce", "enviou a você", "enviou a voce",
+        "te transferiu", "transferiu para você", "transferiu para voce", "transferiu pra você", "transferiu pra voce",
+        "te pagou", "caiu na conta", "caiu na sua conta", "entrou na sua conta",
     )
-    private val incomeSkip = listOf(
-        "estorno", "fatura", "limite", "empréstimo", "emprestimo", "oferta", "agendad", "cancelad",
-        "devolvid", "não realizad", "nao realizad", "não concluíd", "nao concluid", "cashback",
+    private val incomeSkip = noise + listOf("limite")
+
+    /** "MARIA SOUZA te enviou R$ 50,00" */
+    private val senderBeforeRx = Regex(
+        """(?i)^(.*?)\s+(?:te enviou|enviou (?:para|a) voc[eê]|te transferiu|transferiu p(?:a)?ra voc[eê]|te pagou)"""
+    )
+    /** "Pix recebido de MARIA SOUZA no valor de R$ 50,00" */
+    private val fromBeforeRx = Regex(
+        """(?i)\b(?:recebid[oa]|recebeu(?: um pix| uma transfer[êe]ncia)?)\s+de\s+(?!R\$)([^,.;\n]+?)(?:\s+(?:no valor|de R\$|R\$).*)?$"""
     )
     private val fromRx = Regex("""(?i)\b(?:de|da|do|por)\s+(?!R\$)(.+)""")
     private val cnpjRx = Regex("""\b(\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2})\b""")
@@ -175,7 +209,12 @@ object Parser {
         }
         val after = full.substring(m.range.last + 1)
         val cnpj = cnpjRx.find(full)?.groupValues?.get(1) ?: ""
-        val quem = fromRx.find(after)?.groupValues?.get(1)?.replace(docRx, "")?.replace(cutRx, "")?.trim()
+        val before = full.substring(0, m.range.first)
+        val quemBruto = fromRx.find(after)?.groupValues?.get(1)
+            ?: fromBeforeRx.find(before.trim())?.groupValues?.get(1)
+            ?: (senderBeforeRx.find(text.trim()) ?: senderBeforeRx.find(full))?.groupValues?.get(1)
+                ?.split(Regex("""[:!.—–\-]\s""")).orEmpty().lastOrNull()
+        val quem = quemBruto?.replace(docRx, "")?.replace(cutRx, "")?.trim()
         val nome = if (quem != null && quem.length >= 2) pretty(quem) else ""
         val desc = if (nome.isNotBlank()) "$kind de $nome" else kind
         return ParsedIncome(c, desc, kind, nome, cnpj)

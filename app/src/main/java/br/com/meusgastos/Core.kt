@@ -83,6 +83,10 @@ object Prefs {
     fun autoIncome(c: Context): Boolean = sp(c).getBoolean("auto_income", true)
     fun setAutoIncome(c: Context, v: Boolean) { sp(c).edit().putBoolean("auto_income", v).apply() }
 
+    /** Mostrar um aviso discreto a cada gasto/entrada lido do banco. */
+    fun confirmRead(c: Context): Boolean = sp(c).getBoolean("confirm_read", true)
+    fun setConfirmRead(c: Context, v: Boolean) { sp(c).edit().putBoolean("confirm_read", v).apply() }
+
     fun palette(c: Context): Int = sp(c).getInt("palette", 0)
     fun setPalette(c: Context, v: Int) { sp(c).edit().putInt("palette", v).apply() }
 }
@@ -388,12 +392,14 @@ object Processor {
     fun process(ctx: Context, pkg: String, title: String, text: String, time: Long = System.currentTimeMillis()) {
         val db = Db.get(ctx)
         val full = listOf(title, text).filter { it.isNotBlank() }.joinToString(" — ")
+        if (db.logExists(pkg, time, full)) return // já lida
 
         val entrada = Parser.parseIncome(title, text)
         if (entrada != null) {
             db.insertLog(pkg, full, time, true)
             if (Prefs.autoIncome(ctx) && !db.hasRecentIncome(entrada.cents, pkg, time - 120_000)) {
                 Salario.registrar(ctx, db, entrada, time, pkg)
+                if (Prefs.confirmRead(ctx)) Notifier.registered(ctx, "💰 Entrada registrada", "${money(entrada.cents)} · ${entrada.desc}", "INCOME")
             }
             Bus.bump()
             return
@@ -403,6 +409,7 @@ object Processor {
         db.insertLog(pkg, full, time, parsed != null)
         val cartao = if (parsed != null) Cartoes.nome(ctx, pkg, parsed.final4) else ""
         if (parsed != null && parsed.parcelas <= 1 && Recorrentes.casarPagamento(db, parsed.cents, time, pkg, parsed.pay, cartao)) {
+            if (Prefs.confirmRead(ctx)) Notifier.registered(ctx, "🔁 Conta fixa paga", "${money(parsed.cents)} · ${parsed.merchant}", "HOME")
             Bus.bump()
             return
         }
@@ -416,7 +423,15 @@ object Processor {
                 pay = parsed.pay,
                 card = cartao,
             )
-            if (cat == null) Notifier.askCategory(ctx, ids.first(), parsed) else Limits.check(ctx, db, cat)
+            if (cat == null) {
+                Notifier.askCategory(ctx, ids.first(), parsed)
+            } else {
+                Limits.check(ctx, db, cat)
+                if (Prefs.confirmRead(ctx)) {
+                    val parc = if (parsed.parcelas > 1) " (${parsed.parcelas}x)" else ""
+                    Notifier.registered(ctx, "✅ Gasto registrado", "${money(parsed.cents)}$parc · ${parsed.merchant} · $cat", "HOME")
+                }
+            }
         }
         Bus.bump()
     }
@@ -453,6 +468,21 @@ object Notifier {
             .setAutoCancel(true)
             .build()
         nm.notify(id.toInt(), n)
+    }
+
+    /** Aviso discreto (sem som) de que o app leu e registrou uma movimentação. */
+    fun registered(ctx: Context, titulo: String, texto: String, screen: String) {
+        if (!canNotify(ctx)) return
+        val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
+        nm.createNotificationChannel(NotificationChannel("lidos", "Movimentações lidas", NotificationManager.IMPORTANCE_LOW))
+        val n = Notification.Builder(ctx, "lidos")
+            .setSmallIcon(R.drawable.ic_stat)
+            .setContentTitle(titulo)
+            .setContentText(texto)
+            .setContentIntent(openApp(ctx, screen, 3))
+            .setAutoCancel(true)
+            .build()
+        nm.notify(7001, n)
     }
 
     fun askSalary(ctx: Context, e: ParsedIncome) {
@@ -496,7 +526,17 @@ object Notifier {
 
 /** Serviço que o Android chama a cada notificação nova. */
 class NotifService : NotificationListenerService() {
-    override fun onNotificationPosted(sbn: StatusBarNotification) {
+    /** Ao (re)conectar, lê o que chegou enquanto o serviço estava parado e ainda está na barra. */
+    override fun onListenerConnected() {
+        try {
+            activeNotifications?.forEach { ler(it) }
+        } catch (_: Exception) {
+        }
+    }
+
+    override fun onNotificationPosted(sbn: StatusBarNotification) = ler(sbn)
+
+    private fun ler(sbn: StatusBarNotification) {
         try {
             if (sbn.packageName == packageName) return
             if (sbn.packageName !in Prefs.monitored(this)) return
@@ -504,8 +544,10 @@ class NotifService : NotificationListenerService() {
             if ((n.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
             val ex = n.extras ?: return
             val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
-            val text = (ex.getCharSequence(Notification.EXTRA_BIG_TEXT)
-                ?: ex.getCharSequence(Notification.EXTRA_TEXT))?.toString() ?: ""
+            val curto = ex.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
+            val longo = ex.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString() ?: ""
+            val linhas = ex.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)?.lastOrNull()?.toString() ?: ""
+            val text = longo.ifBlank { curto.ifBlank { linhas } }
             if (title.isBlank() && text.isBlank()) return
             Processor.process(this, sbn.packageName, title, text, sbn.postTime)
         } catch (_: Exception) {

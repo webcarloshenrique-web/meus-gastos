@@ -3,6 +3,9 @@ package br.com.meusgastos
 import android.app.DatePickerDialog
 import android.content.Context
 import android.widget.Toast
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -95,85 +98,79 @@ fun AddScreen(db: Db, pad: PaddingValues, inicialFixo: Boolean = false, onSaved:
     val valorParcela = if (parcelado && modoValor == 1 && totalParcelas > 0) valor / totalParcelas else valor
     val sobraDivisao = if (parcelado && modoValor == 1) valor - valorParcela * totalParcelas else 0L
 
+    var catManual by remember { mutableStateOf(false) }
+    var maisOpcoes by remember { mutableStateOf(inicialFixo) }
+    val sugestoes = remember(desc) { db.suggestions(desc, 6).filter { it.merchant != desc.trim() } }
+
+    fun salvar(continuar: Boolean) {
+        if (valor <= 0) {
+            erro = "Digite o valor do gasto"
+            return
+        }
+        val nome = desc.trim().ifBlank { cat ?: "Gasto" }
+        when {
+            fixo -> Recorrentes.criar(db, valor, nome, cat, data, pay, card = card)
+            parcelado -> Installments.register(
+                db, nome, cat, data, "manual", valorParcela, totalParcelas,
+                from = parcelaAtual, withPrevious = lancarAnteriores, firstExtra = sobraDivisao, pay = pay, card = card,
+            )
+            else -> db.insertExpense(Expense(0, valor, nome, cat, data, "manual", pay = pay, card = card))
+        }
+        Limits.check(ctx, db, cat)
+        Bus.bump()
+        Toast.makeText(ctx, "Gasto salvo: ${money(valor)} ✅", Toast.LENGTH_SHORT).show()
+        valor = 0; desc = ""; cat = null; catManual = false; parcelado = false; parcelaAtual = 1; fixo = false
+        if (!continuar) { pay = ""; card = ""; onSaved() }
+    }
+
     Column(
         Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        // 1) Valor e descrição
         AppCard {
             SectionTitle("💵 Quanto você gastou?")
             if (parcelado) {
                 Segmented(listOf("Valor da parcela", "Valor total"), modoValor, { modoValor = it })
             }
             MoneyField(valor, { valor = it; erro = "" }, big = true)
-            Hint("Digite só os números: 2590 vira R$ 25,90")
-            Text("📝 Com o quê?", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte)
             OutlinedTextField(
-                value = desc, onValueChange = { desc = it },
-                placeholder = { Text("Ex: almoço, padaria, geladeira") },
+                value = desc,
+                onValueChange = {
+                    desc = it
+                    if (!catManual) cat = if (it.trim().length >= 3) Categorizer.categorize(db, it) else null
+                },
+                label = { Text("Com o quê? (ex.: almoço, padaria)") },
                 textStyle = TextStyle(fontSize = 18.sp),
                 singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
-        }
-
-        // Tipo de gasto
-        AppCard {
-            SectionTitle("🔖 Que tipo de gasto?")
-            Segmented(listOf("🛒 Compra", "🔁 Fixo (todo mês)"), if (fixo) 1 else 0, { fixo = it == 1; if (fixo) parcelado = false })
-            Hint(
-                if (fixo) "Contas que se repetem todo mês: aluguel, internet, academia, escola… O app lança sozinho no mesmo dia, todo mês."
-                else "Compras do dia a dia: mercado, lanche, loja…"
-            )
-        }
-
-        AppCard {
-            SectionTitle("💳 Como pagou?")
-            PayChips(pay) { pay = it }
-            if (pay == "Crédito" || pay == "Débito" || card.isNotBlank()) {
-                Text("Qual cartão?", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte)
-                CardChooser(db, card) { card = it }
-            }
-        }
-
-        // Parcelado
-        if (!fixo) AppCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    SectionTitle("💳 Compra parcelada?")
-                    Hint("Ex.: uma compra em 10x no cartão")
-                }
-                Switch(checked = parcelado, onCheckedChange = { parcelado = it; if (parcelaAtual > totalParcelas) parcelaAtual = 1 })
-            }
-            if (parcelado) {
-                Text("Em quantas parcelas?", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte)
-                Stepper(totalParcelas, 2..48) {
-                    totalParcelas = it
-                    if (parcelaAtual > it) parcelaAtual = it
-                }
-                Text("Qual parcela você pagou por último?", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte)
-                Hint("Compra nova = 1. Se já vinha pagando, escolha a última que pagou (ex.: 4 de 10).")
-                Stepper(parcelaAtual, 1..totalParcelas) { parcelaAtual = it }
-                if (parcelaAtual > 1) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = lancarAnteriores, onCheckedChange = { lancarAnteriores = it })
-                        Text(
-                            "Lançar também as parcelas 1 a ${parcelaAtual - 1} nos meses passados",
-                            fontSize = 14.sp, color = TextoForte,
-                        )
+            if (sugestoes.isNotEmpty()) {
+                Hint(if (desc.isBlank()) "Onde você mais gasta (toque para preencher):" else "Do seu histórico:")
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    sugestoes.forEach { sg ->
+                        Chip("${Cats.of(sg.category).emoji} ${sg.merchant}", false) {
+                            desc = sg.merchant
+                            if (sg.category != null) { cat = sg.category; catManual = true }
+                            if (sg.pay.isNotBlank()) pay = sg.pay
+                            if (sg.card.isNotBlank()) card = sg.card
+                        }
                     }
                 }
-                if (valor > 0) {
-                    val restantes = totalParcelas - parcelaAtual
-                    Text(
-                        "📌 O app vai lançar a parcela $parcelaAtual/$totalParcelas de ${money(valorParcela + if (parcelaAtual == 1) sobraDivisao else 0L)} " +
-                            "na data abaixo" +
-                            (if (restantes > 0) " e mais $restantes parcela(s) de ${money(valorParcela)}, uma por mês." else ".") +
-                            " Total da compra: ${money(valorParcela * totalParcelas + sobraDivisao)}.",
-                        fontSize = 14.sp, color = TextoForte,
-                    )
-                }
             }
         }
 
+        // 2) Categoria
+        AppCard {
+            SectionTitle("🏷️ Categoria")
+            if (cat != null && !catManual) Hint("✨ Sugerida pelo nome. Toque em outra para trocar.")
+            CategoryGrid(cat) { c -> cat = if (cat == c) null else c; catManual = true }
+            if (cat == null) Hint("Sem categoria, o gasto vai para ❓ Pendentes.")
+        }
+
+        // 3) Data
         AppCard {
             SectionTitle(
                 when {
@@ -189,39 +186,88 @@ fun AddScreen(db: Db, pad: PaddingValues, inicialFixo: Boolean = false, onSaved:
             }
         }
 
+        // 4) Mais opções (recolhido para o lançamento ser rápido)
         AppCard {
-            SectionTitle("🏷️ Categoria")
-            CategoryGrid(cat) { c -> cat = if (cat == c) null else c }
-            Hint("Se não escolher, o gasto vai para ❓ Pendentes.")
+            Row(
+                Modifier.fillMaxWidth().clickable { maisOpcoes = !maisOpcoes },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    SectionTitle("⚙️ Mais opções")
+                    val resumo = listOfNotNull(
+                        if (fixo) "🔁 fixo" else null,
+                        if (parcelado) "💳 ${totalParcelas}x" else null,
+                        if (pay.isNotBlank()) "${Pagamento.emoji(pay)} $pay" else null,
+                        if (card.isNotBlank()) Cartoes.curto(card) else null,
+                    )
+                    Hint(if (resumo.isEmpty()) "Gasto fixo, parcelado, forma de pagamento e cartão" else resumo.joinToString(" · "))
+                }
+                Text(if (maisOpcoes) "▲" else "▼", fontSize = 18.sp, color = TextoSuave)
+            }
+            if (maisOpcoes) {
+                Text("Que tipo de gasto?", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte)
+                Segmented(listOf("🛒 Compra", "🔁 Fixo (todo mês)"), if (fixo) 1 else 0, { fixo = it == 1; if (fixo) parcelado = false })
+                Hint(
+                    if (fixo) "Contas que se repetem: aluguel, internet, academia… O app lança sozinho todo mês."
+                    else "Compras do dia a dia: mercado, lanche, loja…"
+                )
+                Text("Como pagou?", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte)
+                PayChips(pay) { pay = it }
+                if (pay == "Crédito" || pay == "Débito" || card.isNotBlank()) {
+                    Text("Qual cartão?", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte)
+                    CardChooser(db, card) { card = it }
+                }
+                if (!fixo) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Compra parcelada?", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte)
+                            Hint("Ex.: uma compra em 10x no cartão")
+                        }
+                        Switch(checked = parcelado, onCheckedChange = { parcelado = it; if (parcelaAtual > totalParcelas) parcelaAtual = 1 })
+                    }
+                    if (parcelado) {
+                        Text("Em quantas parcelas?", fontSize = 15.sp, color = TextoForte)
+                        Stepper(totalParcelas, 2..48) {
+                            totalParcelas = it
+                            if (parcelaAtual > it) parcelaAtual = it
+                        }
+                        Text("Qual parcela você pagou por último?", fontSize = 15.sp, color = TextoForte)
+                        Hint("Compra nova = 1. Se já vinha pagando, escolha a última que pagou (ex.: 4 de 10).")
+                        Stepper(parcelaAtual, 1..totalParcelas) { parcelaAtual = it }
+                        if (parcelaAtual > 1) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(checked = lancarAnteriores, onCheckedChange = { lancarAnteriores = it })
+                                Text("Lançar também as parcelas 1 a ${parcelaAtual - 1} nos meses passados", fontSize = 14.sp, color = TextoForte)
+                            }
+                        }
+                        if (valor > 0) {
+                            val restantes = totalParcelas - parcelaAtual
+                            Text(
+                                "📌 O app vai lançar a parcela $parcelaAtual/$totalParcelas de ${money(valorParcela + if (parcelaAtual == 1) sobraDivisao else 0L)} " +
+                                    "na data escolhida" +
+                                    (if (restantes > 0) " e mais $restantes parcela(s) de ${money(valorParcela)}, uma por mês." else ".") +
+                                    " Total da compra: ${money(valorParcela * totalParcelas + sobraDivisao)}.",
+                                fontSize = 14.sp, color = TextoForte,
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         if (erro.isNotEmpty()) Text(erro, color = Vermelho, fontSize = 16.sp)
 
         Button(
-            onClick = {
-                if (valor <= 0) {
-                    erro = "Digite o valor do gasto"
-                } else {
-                    val nome = desc.trim().ifBlank { cat ?: "Gasto" }
-                    when {
-                        fixo -> Recorrentes.criar(db, valor, nome, cat, data, pay, card = card)
-                        parcelado -> Installments.register(
-                            db, nome, cat, data, "manual", valorParcela, totalParcelas,
-                            from = parcelaAtual, withPrevious = lancarAnteriores, firstExtra = sobraDivisao, pay = pay, card = card,
-                        )
-                        else -> db.insertExpense(Expense(0, valor, nome, cat, data, "manual", pay = pay, card = card))
-                    }
-                    Limits.check(ctx, db, cat)
-                    Bus.bump()
-                    Toast.makeText(ctx, "Gasto salvo! ✅", Toast.LENGTH_SHORT).show()
-                    valor = 0; desc = ""; cat = null; parcelado = false; parcelaAtual = 1; pay = ""; card = ""; fixo = false
-                    onSaved()
-                }
-            },
+            onClick = { salvar(false) },
             modifier = Modifier.fillMaxWidth().height(58.dp),
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Verde),
-        ) { Text("Salvar gasto", fontSize = 19.sp) }
+        ) { Text(if (valor > 0) "Salvar ${money(valor)}" else "Salvar gasto", fontSize = 19.sp) }
+        OutlinedButton(
+            onClick = { salvar(true) },
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+            shape = RoundedCornerShape(16.dp),
+        ) { Text("Salvar e lançar outro", fontSize = 16.sp) }
         Spacer(Modifier.height(24.dp))
     }
 }
