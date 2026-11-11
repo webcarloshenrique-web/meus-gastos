@@ -93,7 +93,7 @@ fun AddScreen(db: Db, pad: PaddingValues, inicialFixo: Boolean = false, onSaved:
     var modoValor by remember { mutableIntStateOf(0) } // 0 = valor da parcela, 1 = valor total
     var totalParcelas by remember { mutableIntStateOf(3) }
     var parcelaAtual by remember { mutableIntStateOf(1) }
-    var lancarAnteriores by remember { mutableStateOf(false) }
+    var lancarAnteriores by remember { mutableStateOf(true) }
 
     val valorParcela = if (parcelado && modoValor == 1 && totalParcelas > 0) valor / totalParcelas else valor
     val sobraDivisao = if (parcelado && modoValor == 1) valor - valorParcela * totalParcelas else 0L
@@ -110,8 +110,11 @@ fun AddScreen(db: Db, pad: PaddingValues, inicialFixo: Boolean = false, onSaved:
         val nome = desc.trim().ifBlank { cat ?: "Gasto" }
         when {
             fixo -> Recorrentes.criar(db, valor, nome, cat, data, pay, card = card)
+            // A data escolhida é a da 1ª parcela: a parcela N cai (N - 1) meses depois.
             parcelado -> Installments.register(
-                db, nome, cat, data, "manual", valorParcela, totalParcelas,
+                db, nome, cat,
+                java.util.Calendar.getInstance().apply { timeInMillis = data; add(java.util.Calendar.MONTH, parcelaAtual - 1) }.timeInMillis,
+                "manual", valorParcela, totalParcelas,
                 from = parcelaAtual, withPrevious = lancarAnteriores, firstExtra = sobraDivisao, pay = pay, card = card,
             )
             else -> db.insertExpense(Expense(0, valor, nome, cat, data, "manual", pay = pay, card = card))
@@ -175,7 +178,7 @@ fun AddScreen(db: Db, pad: PaddingValues, inicialFixo: Boolean = false, onSaved:
             SectionTitle(
                 when {
                     fixo -> "📅 Quando vence (ou venceu) este mês?"
-                    parcelado -> "📅 Quando pagou essa parcela?"
+                    parcelado -> "📅 Quando foi a 1ª parcela?"
                     else -> "📅 Quando?"
                 }
             )
@@ -232,21 +235,24 @@ fun AddScreen(db: Db, pad: PaddingValues, inicialFixo: Boolean = false, onSaved:
                             if (parcelaAtual > it) parcelaAtual = it
                         }
                         Text("Qual parcela você pagou por último?", fontSize = 15.sp, color = TextoForte)
-                        Hint("Compra nova = 1. Se já vinha pagando, escolha a última que pagou (ex.: 4 de 10).")
+                        Hint("Compra nova = 1. Se já vinha pagando, escolha a última que pagou (ex.: 3 de 6). A data acima é sempre a da 1ª parcela.")
                         Stepper(parcelaAtual, 1..totalParcelas) { parcelaAtual = it }
                         if (parcelaAtual > 1) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Checkbox(checked = lancarAnteriores, onCheckedChange = { lancarAnteriores = it })
-                                Text("Lançar também as parcelas 1 a ${parcelaAtual - 1} nos meses passados", fontSize = 14.sp, color = TextoForte)
+                                Text("Lançar também as parcelas já pagas (1 a ${parcelaAtual - 1})", fontSize = 14.sp, color = TextoForte)
                             }
                         }
                         if (valor > 0) {
-                            val restantes = totalParcelas - parcelaAtual
+                            val primeira = if (lancarAnteriores) 1 else parcelaAtual
+                            fun mes(k: Int): String {
+                                val c = java.util.Calendar.getInstance().apply { timeInMillis = data; add(java.util.Calendar.MONTH, k - 1) }
+                                return "${Dates.ABBR[c.get(java.util.Calendar.MONTH)]}/${c.get(java.util.Calendar.YEAR) % 100}"
+                            }
                             Text(
-                                "📌 O app vai lançar a parcela $parcelaAtual/$totalParcelas de ${money(valorParcela + if (parcelaAtual == 1) sobraDivisao else 0L)} " +
-                                    "na data escolhida" +
-                                    (if (restantes > 0) " e mais $restantes parcela(s) de ${money(valorParcela)}, uma por mês." else ".") +
-                                    " Total da compra: ${money(valorParcela * totalParcelas + sobraDivisao)}.",
+                                "📌 O app vai lançar as parcelas $primeira a $totalParcelas de ${money(valorParcela)}, " +
+                                    "uma por mês, de ${mes(primeira)} até ${mes(totalParcelas)}. " +
+                                    "Total da compra: ${money(valorParcela * totalParcelas + sobraDivisao)}.",
                                 fontSize = 14.sp, color = TextoForte,
                             )
                         }
