@@ -410,7 +410,7 @@ object Planilha {
             listOf("Parcela atual", "Só para compra parcelada: a parcela deste mês. Ex.: comprou em 10 vezes em julho, em novembro é a 5."),
             listOf("Total de parcelas", "Só para compra parcelada: em quantas vezes. Ex.: 10"),
             listOf("Criar próximas parcelas?", "Sim = o app cria sozinho as parcelas que faltam nos próximos meses. Não = lança só esta linha."),
-            listOf("Forma de pagamento", "Opcional: Crédito, Débito, Pix, Dinheiro ou Boleto."),
+            listOf("Forma de pagamento", "Opcional: Crédito, Débito, Pix, Dinheiro, Boleto ou Empréstimo."),
             listOf("Fixo?", "Sim = conta que repete todo mês (aluguel, internet…). O app passa a lançar sozinho no mesmo dia, todo mês."),
             listOf("Cartão", "Opcional: banco e final do cartão. Ex.: Banco do Brasil 2332 ou Nubank 7592."),
             listOf("Mês de referência", "Só para entradas, opcional: o mês que o dinheiro paga. Ex.: salário que caiu em 03/11 e paga outubro = 10/2026."),

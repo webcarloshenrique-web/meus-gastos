@@ -62,6 +62,12 @@ object Parser {
         "pendente", "aguardando", "saldo insuficiente", "aplicação", "aplicacao", "resgate", "investi",
     )
 
+    /** Parcela de empréstimo/financiamento paga ("parcela 3/24 do empréstimo debitada"). */
+    private val loanRx = Regex(
+        """(?i)(?:(?:parcela|presta[çc][ãa]o).{0,50}(?:empr[ée]stimo|financiamento|consignado)|(?:empr[ée]stimo|financiamento|consignado).{0,50}(?:parcela|presta[çc][ãa]o))"""
+    )
+    private val loanPaidRx = Regex("""(?i)debitad|\bpag[ao]\b|quitad|realizad|descontad|efetuad""")
+
     /** Palavras de ENTRADA: se aparecerem, não é gasto. */
     private val incomingHints = listOf("recebeu", "recebid", "deposito", "depósito", "creditad")
 
@@ -110,7 +116,9 @@ object Parser {
     fun parse(title: String, text: String): Parsed? {
         val full = "$title $text".trim()
         val low = full.lowercase()
-        if (noise.any { low.contains(it) }) return null
+        val emprestimo = loanRx.containsMatchIn(full) && loanPaidRx.containsMatchIn(full)
+        val ruido = if (emprestimo) noise.filter { !it.startsWith("empr") } else noise
+        if (ruido.any { low.contains(it) }) return null
         if (incomingHints.any { low.contains(it) }) return null
         if (spendWords.none { low.contains(it) }) return null
 
@@ -155,9 +163,14 @@ object Parser {
             ?: colonRx.find(before)?.groupValues?.get(1)?.takeIf { !genericRx.containsMatchIn(it) }
             ?: trailingRx.find(after)?.groupValues?.get(1)?.takeIf { !genericRx.containsMatchIn(it) }
         val cleaned = raw?.replace(cutRx, "")?.trim()
-        val merchant: String = cleaned?.takeIf { it.length >= 2 }
-            ?: (if (low.contains("boleto")) "Boleto" else title.ifBlank { "Gasto" })
+        val merchant: String = cleaned?.takeIf { it.length >= 2 && !(emprestimo && genericRx.containsMatchIn(it)) }
+            ?: when {
+                emprestimo -> if (title.isBlank()) "Empréstimo" else "Empréstimo ${title.trim()}"
+                low.contains("boleto") -> "Boleto"
+                else -> title.ifBlank { "Gasto" }
+            }
         val pay = when {
+            emprestimo -> "Empréstimo"
             parcelas > 1 || low.contains("crédito") || low.contains("credito") -> "Crédito"
             low.contains("débito") || low.contains("debito") -> "Débito"
             low.contains("pix") -> "Pix"

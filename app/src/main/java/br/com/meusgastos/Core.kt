@@ -240,7 +240,10 @@ object Salario {
 
 /** Formas de pagamento. */
 object Pagamento {
-    val opcoes = listOf("Crédito" to "💳", "Débito" to "🏧", "Pix" to "⚡", "Dinheiro" to "💵", "Boleto" to "🧾")
+    val opcoes = listOf("Crédito" to "💳", "Débito" to "🏧", "Pix" to "⚡", "Dinheiro" to "💵", "Boleto" to "🧾", "Empréstimo" to "🏦")
+
+    /** Formas que funcionam com parcelas (crédito e empréstimo). */
+    fun parcelavel(p: String) = p == "Crédito" || p == "Empréstimo"
     fun emoji(p: String): String = opcoes.firstOrNull { it.first == p }?.second ?: ""
 
     /** Aceita "credito", "cartão de crédito", "pix"... */
@@ -248,6 +251,7 @@ object Pagamento {
         val x = Categorizer.norm(s)
         return when {
             x.isBlank() -> ""
+            x.contains("empr") || x.contains("financ") || x.contains("consignad") -> "Empréstimo"
             x.contains("cred") -> "Crédito"
             x.contains("deb") -> "Débito"
             x.contains("pix") -> "Pix"

@@ -215,7 +215,12 @@ fun AddScreen(db: Db, pad: PaddingValues, inicialFixo: Boolean = false, onSaved:
                     else "Compras do dia a dia: mercado, lanche, loja…"
                 )
                 Text("Como pagou?", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte)
-                PayChips(pay) { pay = it }
+                PayChips(pay) {
+                    pay = it
+                    // Empréstimo quase sempre é parcelado
+                    if (it == "Empréstimo" && !fixo) { parcelado = true; if (totalParcelas < 6) totalParcelas = 12 }
+                }
+                if (pay == "Empréstimo") Hint("🏦 Empréstimo funciona como o crédito: informe em quantas parcelas e a última paga. O app lança uma por mês.")
                 if (pay == "Crédito" || pay == "Débito" || card.isNotBlank()) {
                     Text("Qual cartão?", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte)
                     CardChooser(db, card) { card = it }
@@ -223,8 +228,8 @@ fun AddScreen(db: Db, pad: PaddingValues, inicialFixo: Boolean = false, onSaved:
                 if (!fixo) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("Compra parcelada?", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte)
-                            Hint("Ex.: uma compra em 10x no cartão")
+                            Text(if (pay == "Empréstimo") "Empréstimo parcelado?" else "Compra parcelada?", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextoForte)
+                            Hint(if (pay == "Empréstimo") "Ex.: empréstimo em 24 parcelas" else "Ex.: uma compra em 10x no cartão")
                         }
                         Switch(checked = parcelado, onCheckedChange = { parcelado = it; if (parcelaAtual > totalParcelas) parcelaAtual = 1 })
                     }

@@ -395,6 +395,10 @@ fun insights(lista: List<Expense>, prev: List<Expense>, month: Int, saldo: Saldo
         val (c, v) = porCartao.maxByOrNull { it.value }!!
         out.add("💳" to "Cartão com mais gastos: $c (${money(v)} de ${money(porCartao.values.sum())} nos cartões).")
     }
+    val emprestimo = lista.filter { it.pay == "Empréstimo" }.sumOf { it.cents }
+    if (emprestimo > 0) {
+        out.add("🏦" to "Parcelas de empréstimo somam ${money(emprestimo)} neste mês (${(emprestimo * 100.0 / total).roundToInt()}% dos gastos).")
+    }
     val credito = lista.filter { it.pay == "Crédito" }.sumOf { it.cents }
     if (credito > 0) {
         out.add("💳" to "No cartão de crédito foram ${money(credito)} (${(credito * 100.0 / total).roundToInt()}%). Lembre que isso vem na fatura.")

@@ -497,7 +497,7 @@ fun ImportScreen(db: Db, pad: PaddingValues) {
         Triple("Parcela atual", "Só se for parcelado: a parcela deste mês", "5"),
         Triple("Total de parcelas", "Só se for parcelado", "10"),
         Triple("Criar próximas parcelas?", "Sim = cria as que faltam nos próximos meses", "Sim"),
-        Triple("Forma de pagamento", "Crédito, Débito, Pix, Dinheiro ou Boleto", "Pix"),
+        Triple("Forma de pagamento", "Crédito, Débito, Pix, Dinheiro, Boleto ou Empréstimo", "Pix"),
         Triple("Fixo?", "Sim = conta que repete todo mês", "Não"),
         Triple("Cartão", "Banco e final do cartão (opcional)", "BB 2332"),
     )
